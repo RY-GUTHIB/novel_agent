@@ -1,0 +1,735 @@
+[
+  {
+    "id": "FS_039",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "母亲手腕上的月形胎记",
+    "related_characters": [
+      "叶青云",
+      "苏月华"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_040",
+    "chapter_planted": 2,
+    "type": "mystery",
+    "content": "青玄上人提及叶无痕时神色复杂",
+    "related_characters": [
+      "叶青云",
+      "青玄上人"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_041",
+    "chapter_planted": 4,
+    "type": "mystery",
+    "content": "夜枭匕首上的血煞教标记",
+    "related_characters": [
+      "叶青云",
+      "夜枭",
+      "青玄上人"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_042",
+    "chapter_planted": 5,
+    "type": "mystery",
+    "content": "剑冢深处传来异动",
+    "related_characters": [
+      "叶青云",
+      "青玄上人"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_043",
+    "chapter_planted": 6,
+    "type": "mystery",
+    "content": "卧底临死前提到‘血煞计划’",
+    "related_characters": [
+      "叶青云",
+      "卧底弟子"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_044",
+    "chapter_planted": 7,
+    "type": "mystery",
+    "content": "心魔中出现的域外天魔虚影",
+    "related_characters": [
+      "叶青云"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_045",
+    "chapter_planted": 8,
+    "type": "mystery",
+    "content": "书信末尾的暗语‘月圆之夜’",
+    "related_characters": [
+      "叶青云",
+      "苏月瑶"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_046",
+    "chapter_planted": 9,
+    "type": "mystery",
+    "content": "夜枭撤退时遗落的暗影殿令牌",
+    "related_characters": [
+      "叶青云",
+      "夜枭",
+      "青玄上人"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_047",
+    "chapter_planted": 10,
+    "type": "mystery",
+    "content": "城郊发现血煞教祭坛",
+    "related_characters": [
+      "叶青云",
+      "青玄上人"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_048",
+    "chapter_planted": 11,
+    "type": "mystery",
+    "content": "幸存者体内被种下血种",
+    "related_characters": [
+      "叶青云",
+      "幸存者"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_049",
+    "chapter_planted": 12,
+    "type": "mystery",
+    "content": "据点中发现玄月世家族徽",
+    "related_characters": [
+      "叶青云",
+      "苏月瑶"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_050",
+    "chapter_planted": 13,
+    "type": "mystery",
+    "content": "天机老人提到‘域外天魔’",
+    "related_characters": [
+      "叶青云",
+      "天机老人"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_051",
+    "chapter_planted": 14,
+    "type": "mystery",
+    "content": "夜枭后背的血煞教烙印",
+    "related_characters": [
+      "叶青云",
+      "夜枭",
+      "天机老人"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_052",
+    "chapter_planted": 15,
+    "type": "mystery",
+    "content": "血煞老祖认出叶青云身份",
+    "related_characters": [
+      "叶青云",
+      "血煞老祖",
+      "天机老人",
+      "苏月瑶"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_053",
+    "chapter_planted": 16,
+    "type": "mystery",
+    "content": "月华池底的神秘封印",
+    "related_characters": [
+      "叶青云",
+      "苏月瑶"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_054",
+    "chapter_planted": 17,
+    "type": "mystery",
+    "content": "密信中提到‘天孤剑尊的剑意’",
+    "related_characters": [
+      "叶青云"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_055",
+    "chapter_planted": 18,
+    "type": "mystery",
+    "content": "池底封印松动",
+    "related_characters": [
+      "叶青云"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_056",
+    "chapter_planted": 19,
+    "type": "mystery",
+    "content": "影无痕临死前透露‘天魔将至’",
+    "related_characters": [
+      "叶青云",
+      "夜枭",
+      "影无痕",
+      "血煞老祖"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_057",
+    "chapter_planted": 20,
+    "type": "mystery",
+    "content": "玄月天眼中闪过挣扎",
+    "related_characters": [
+      "叶青云",
+      "玄月天",
+      "苏月瑶"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_058",
+    "chapter_planted": 21,
+    "type": "mystery",
+    "content": "青玄上人交给叶青云一封遗书",
+    "related_characters": [
+      "叶青云",
+      "青玄上人"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_059",
+    "chapter_planted": 22,
+    "type": "mystery",
+    "content": "战场上空的天魔裂缝",
+    "related_characters": [
+      "叶青云",
+      "守军将领"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_060",
+    "chapter_planted": 23,
+    "type": "mystery",
+    "content": "叶无痕身上的天魔毒",
+    "related_characters": [
+      "叶青云",
+      "叶无痕"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_061",
+    "chapter_planted": 24,
+    "type": "mystery",
+    "content": "天魔首领注意到叶青云",
+    "related_characters": [
+      "叶青云",
+      "叶无痕"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_062",
+    "chapter_planted": 25,
+    "type": "mystery",
+    "content": "叶无痕眼中闪过欣慰",
+    "related_characters": [
+      "叶青云"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_063",
+    "chapter_planted": 26,
+    "type": "mystery",
+    "content": "叶无痕提到‘玄月血脉可解毒’",
+    "related_characters": [
+      "叶青云",
+      "叶无痕"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_064",
+    "chapter_planted": 27,
+    "type": "mystery",
+    "content": "血煞老祖手中的天魔法器",
+    "related_characters": [
+      "叶青云",
+      "青玄上人",
+      "血煞老祖"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_065",
+    "chapter_planted": 28,
+    "type": "mystery",
+    "content": "血煞老祖撤退时留下‘天魔降临’",
+    "related_characters": [
+      "叶青云",
+      "夜枭",
+      "血煞老祖"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_066",
+    "chapter_planted": 29,
+    "type": "mystery",
+    "content": "玄月天暗中与血煞教通信",
+    "related_characters": [
+      "叶青云",
+      "苏月瑶",
+      "玄月天"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_067",
+    "chapter_planted": 30,
+    "type": "mystery",
+    "content": "觉醒时引来天魔裂缝震动",
+    "related_characters": [
+      "叶青云",
+      "苏月瑶"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_068",
+    "chapter_planted": 31,
+    "type": "mystery",
+    "content": "玄月天暗中传递情报",
+    "related_characters": [
+      "叶青云",
+      "天机老人",
+      "青玄上人",
+      "玄月天"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_069",
+    "chapter_planted": 32,
+    "type": "mystery",
+    "content": "金丹上出现天魔纹路",
+    "related_characters": [
+      "叶青云"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_070",
+    "chapter_planted": 33,
+    "type": "mystery",
+    "content": "血煞老祖召唤天魔投影",
+    "related_characters": [
+      "叶青云",
+      "血煞老祖",
+      "夜枭"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_071",
+    "chapter_planted": 34,
+    "type": "mystery",
+    "content": "苏月华体内的天魔禁制",
+    "related_characters": [
+      "叶青云",
+      "苏月华"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_072",
+    "chapter_planted": 36,
+    "type": "mystery",
+    "content": "叶无痕将剑意传给叶青云",
+    "related_characters": [
+      "叶青云",
+      "叶无痕",
+      "天魔首领"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_073",
+    "chapter_planted": 37,
+    "type": "mystery",
+    "content": "天魔首领本体在裂缝另一侧咆哮",
+    "related_characters": [
+      "叶青云"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_074",
+    "chapter_planted": 38,
+    "type": "mystery",
+    "content": "封印需要定期加固",
+    "related_characters": [
+      "叶青云",
+      "叶无痕",
+      "苏月华"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_075",
+    "chapter_planted": 39,
+    "type": "mystery",
+    "content": "大陆各地出现天魔残留",
+    "related_characters": [
+      "叶青云",
+      "夜枭",
+      "苏月瑶",
+      "青玄上人"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_076",
+    "chapter_planted": 40,
+    "type": "mystery",
+    "content": "九转还魂草生长在‘万妖山脉’深处",
+    "related_characters": [
+      "叶青云",
+      "苏月华",
+      "苏月瑶"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_077",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "天剑阁有父亲留下的东西和机缘，暗示未来事件",
+    "related_characters": [
+      "叶青云",
+      "苏月华"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_078",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "母亲苏月华被软禁在后院小屋，原因未明，涉及外公和父亲未归的秘密",
+    "related_characters": [
+      "叶青云",
+      "苏月华"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_079",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "父亲一去不回，留下未说明的过去和秘密",
+    "related_characters": [
+      "叶青云",
+      "苏月华"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_080",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "母亲暗中传授功法，暗示她有隐藏身份或目的",
+    "related_characters": [
+      "叶青云",
+      "苏月华"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_081",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "母亲消耗元气传功，暗示她身体虚弱或隐藏危机",
+    "related_characters": [
+      "叶青云",
+      "苏月华"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_082",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "叶青云发誓要让玄月世家付出代价，暗示未来冲突",
+    "related_characters": [
+      "叶青云",
+      "苏月华"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_083",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "窗外出现陌生强大气息，带着杀意，暗示即将发生的危险事件",
+    "related_characters": [
+      "叶青云",
+      "苏月华"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  }
+]

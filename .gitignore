@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ChromaDB vector store (large binary)
+data/vector_db/
+projects/*/data/vector_db/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Env / secrets
+.env
+.env.local
+
+# Output (generated chapters, can be regenerated)
+projects/*/output/
+
+# Logs
+*.log

@@ -1,0 +1,11 @@
+# novel_agent/requirements.txt
+# 核心依赖
+openai>=1.0.0          # DeepSeek使用OpenAI兼容API
+chromadb>=0.5.0         # 向量数据库（RAG）
+tiktoken>=0.7.0         # token计数
+
+# 如用本地模型（可选）
+# ollama>=0.1.0
+
+# 如需要高级Agent框架（可选）
+# langchain>=0.2.0

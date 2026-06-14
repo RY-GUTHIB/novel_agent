@@ -1,0 +1,93 @@
+{
+  "天剑城": {
+    "name": "天剑城",
+    "description": "天剑阁山脚下的主城，人口百万，修士云集，是大陆东部中心。",
+    "type": "city",
+    "connected_to": [
+      "天剑阁",
+      "玄月城"
+    ],
+    "travel_time": {},
+    "first_appeared": 1,
+    "notable_characters": []
+  },
+  "天剑阁": {
+    "name": "天剑阁",
+    "description": "位于天剑山脉主峰，云雾缭绕，剑意弥漫，宗门大殿以千年玄铁铸成。",
+    "type": "sect",
+    "connected_to": [
+      "天剑城",
+      "剑冢"
+    ],
+    "travel_time": {},
+    "first_appeared": 1,
+    "notable_characters": []
+  },
+  "玄月城": {
+    "name": "玄月城",
+    "description": "玄月世家祖地，城池呈月牙形，城墙由月光石砌成，夜晚泛光。",
+    "type": "city",
+    "connected_to": [
+      "天剑城",
+      "月华林"
+    ],
+    "travel_time": {},
+    "first_appeared": 1,
+    "notable_characters": []
+  },
+  "月华林": {
+    "name": "月华林",
+    "description": "玄月世家后山禁地，古木参天，灵气浓郁，内有月华池可淬炼血脉。",
+    "type": "forest",
+    "connected_to": [
+      "玄月城"
+    ],
+    "travel_time": {},
+    "first_appeared": 1,
+    "notable_characters": []
+  },
+  "血煞谷": {
+    "name": "血煞谷",
+    "description": "血煞教总坛，位于西部荒原地下，谷中血雾弥漫，尸骨遍地。",
+    "type": "dungeon",
+    "connected_to": [
+      "暗影殿"
+    ],
+    "travel_time": {},
+    "first_appeared": 1,
+    "notable_characters": []
+  },
+  "暗影殿": {
+    "name": "暗影殿",
+    "description": "位于地下溶洞，机关重重，是杀手组织总部。",
+    "type": "dungeon",
+    "connected_to": [
+      "血煞谷"
+    ],
+    "travel_time": {},
+    "first_appeared": 1,
+    "notable_characters": []
+  },
+  "北冥皇城": {
+    "name": "北冥皇城",
+    "description": "北冥王朝都城，金碧辉煌，阵法护城，修士与凡人混居。",
+    "type": "city",
+    "connected_to": [
+      "天剑城"
+    ],
+    "travel_time": {},
+    "first_appeared": 1,
+    "notable_characters": []
+  },
+  "剑冢": {
+    "name": "剑冢",
+    "description": "天剑阁禁地，埋葬历代强者佩剑，剑意狂暴，是试炼之地。",
+    "type": "mountain",
+    "connected_to": [
+      "天剑阁"
+    ],
+    "travel_time": {},
+    "first_appeared": 1,
+    "notable_characters": []
+  }
+}

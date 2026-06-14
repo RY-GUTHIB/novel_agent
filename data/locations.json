@@ -1,0 +1,73 @@
+{
+  "天桥": {
+    "name": "天桥",
+    "description": "京城最繁华的集市之一，人流如织，叶尘从小在此摆摊算命，周围有茶馆、酒楼、杂耍摊",
+    "type": "city",
+    "connected_to": [
+      "京城内城",
+      "贫民窟"
+    ],
+    "first_appeared": 1,
+    "notable_characters": [],
+    "notes": ""
+  },
+  "苏家旧址": {
+    "name": "苏家旧址",
+    "description": "江南水乡，曾经辉煌的苏家大宅已化为废墟，杂草丛生，地下藏有苏家祖传密室",
+    "type": "forest",
+    "connected_to": [
+      "江南小镇",
+      "青云山"
+    ],
+    "first_appeared": 1,
+    "notable_characters": [],
+    "notes": ""
+  },
+  "青云山": {
+    "name": "青云山",
+    "description": "山高林密，云雾缭绕，青玄子隐居之地，山中有气运灵脉，修炼圣地",
+    "type": "mountain",
+    "connected_to": [
+      "江南小镇",
+      "京城"
+    ],
+    "first_appeared": 1,
+    "notable_characters": [],
+    "notes": ""
+  },
+  "气运宗门遗址": {
+    "name": "气运宗门遗址",
+    "description": "位于西域荒漠深处，曾是上古气运宗门的山门，如今只剩断壁残垣，地下有九枚铜钱的线索",
+    "type": "sect",
+    "connected_to": [
+      "西域荒漠",
+      "地下密室"
+    ],
+    "first_appeared": 1,
+    "notable_characters": [],
+    "notes": ""
+  },
+  "京城皇宫": {
+    "name": "京城皇宫",
+    "description": "宏伟壮丽，气运汇聚之地，龙脉所在，但被赵无极暗中污染",
+    "type": "city",
+    "connected_to": [
+      "京城内城",
+      "天桥"
+    ],
+    "first_appeared": 1,
+    "notable_characters": [],
+    "notes": ""
+  },
+  "地下密室": {
+    "name": "地下密室",
+    "description": "气运宗门遗址下的隐秘空间，布满机关和阵法，存放着上古铜钱的秘密和千年布局的真相",
+    "type": "dungeon",
+    "connected_to": [
+      "气运宗门遗址"
+    ],
+    "first_appeared": 1,
+    "notable_characters": [],
+    "notes": ""
+  }
+}

@@ -1,0 +1,450 @@
+[
+  {
+    "id": "FS_001",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "铜钱上的古老符文",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_002",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "墨渊的黑影",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_003",
+    "chapter_planted": 2,
+    "type": "mystery",
+    "content": "赵无极的野心",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "赵无极"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_004",
+    "chapter_planted": 2,
+    "type": "mystery",
+    "content": "铜钱的反噬",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "赵无极"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_005",
+    "chapter_planted": 3,
+    "type": "mystery",
+    "content": "青玄子与老算命先生的旧交",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "青玄子"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_006",
+    "chapter_planted": 3,
+    "type": "mystery",
+    "content": "铜钱的来历",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "青玄子"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_007",
+    "chapter_planted": 4,
+    "type": "mystery",
+    "content": "墨渊的师门往事",
+    "related_characters": [
+      "叶尘",
+      "墨渊",
+      "青玄子"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_008",
+    "chapter_planted": 4,
+    "type": "mystery",
+    "content": "九枚铜钱之说",
+    "related_characters": [
+      "叶尘",
+      "墨渊",
+      "青玄子"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_009",
+    "chapter_planted": 5,
+    "type": "mystery",
+    "content": "古籍中的地图",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "赵无极手下"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_010",
+    "chapter_planted": 5,
+    "type": "mystery",
+    "content": "苏家灭门真相",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "赵无极手下"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_011",
+    "chapter_planted": 6,
+    "type": "mystery",
+    "content": "邪教教主的影子",
+    "related_characters": [
+      "叶尘",
+      "墨渊",
+      "邪教教徒"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_012",
+    "chapter_planted": 6,
+    "type": "mystery",
+    "content": "荒漠中的阵法",
+    "related_characters": [
+      "叶尘",
+      "墨渊",
+      "邪教教徒"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_013",
+    "chapter_planted": 7,
+    "type": "mystery",
+    "content": "石壁上的预言",
+    "related_characters": [
+      "叶尘",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_014",
+    "chapter_planted": 7,
+    "type": "mystery",
+    "content": "九枚铜钱的排列图",
+    "related_characters": [
+      "叶尘",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_015",
+    "chapter_planted": 8,
+    "type": "mystery",
+    "content": "教主的真面目",
+    "related_characters": [
+      "叶尘",
+      "墨渊",
+      "青玄子",
+      "邪教教主"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_016",
+    "chapter_planted": 8,
+    "type": "mystery",
+    "content": "赵无极的政变",
+    "related_characters": [
+      "叶尘",
+      "墨渊",
+      "青玄子",
+      "邪教教主"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_017",
+    "chapter_planted": 9,
+    "type": "mystery",
+    "content": "青玄子的遗言",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊",
+      "青玄子",
+      "赵无极",
+      "邪教教主"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_018",
+    "chapter_planted": 9,
+    "type": "mystery",
+    "content": "铜钱之力分散",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊",
+      "青玄子",
+      "赵无极",
+      "邪教教主"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_019",
+    "chapter_planted": 10,
+    "type": "mystery",
+    "content": "铜钱封印松动",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_020",
+    "chapter_planted": 10,
+    "type": "mystery",
+    "content": "远方的新威胁",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 3,
+    "status": "planted"
+  },
+  {
+    "id": "FS_021",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "天桥高处有紫色气丝，代表有人在暗中观察叶尘和苏婉清",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_022",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "叶尘突然获得看见气丝的能力，能预知血光之灾和财运，并尝试用意念拨动气丝",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_023",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "古铜钱上浮现‘天命’二字，能催动神秘力量，且与叶尘的命师天赋相关",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_024",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "墨渊追寻天命铜钱五年，认出叶尘拥有铜钱并催动其力量，暗示未来冲突",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_025",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "苏婉清三年前不告而别，如今被黑衣蒙面人追杀，身上带血，手握断剑",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  },
+  {
+    "id": "FS_026",
+    "chapter_planted": 1,
+    "type": "mystery",
+    "content": "黑衣蒙面人头顶黑气，带有腐朽死亡气息，能延伸缠绕他人气丝，暗示非普通人或与邪恶势力有关",
+    "related_characters": [
+      "叶尘",
+      "苏婉清",
+      "墨渊"
+    ],
+    "related_items": [],
+    "planted_how": "",
+    "chapter_resolved": null,
+    "resolution": "",
+    "importance": 2,
+    "status": "planted"
+  }
+]

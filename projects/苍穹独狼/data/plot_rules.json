@@ -1,0 +1,29 @@
+{
+  "在天剑碑前领悟剑意": {
+    "condition": "在天剑碑前领悟剑意",
+    "consequence": "直接入内门",
+    "rule_text": "凡能在天剑碑前领悟剑意者，可直接入内门",
+    "chapter_introduced": 3,
+    "source_character": "执事",
+    "overridden": false,
+    "override_reason": ""
+  },
+  "未领悟剑意的新弟子": {
+    "condition": "未领悟剑意的新弟子",
+    "consequence": "编入外门，半年后外门试炼优胜者方可进入内门",
+    "rule_text": "其余人等，一律编入外门，半年后进行外门试炼，优胜者方可进入内门",
+    "chapter_introduced": 3,
+    "source_character": "执事",
+    "overridden": false,
+    "override_reason": ""
+  },
+  "外门试炼前十名": {
+    "condition": "外门试炼前十名",
+    "consequence": "进入内门",
+    "rule_text": "外门试炼只有前十名才能进入内门",
+    "chapter_introduced": 3,
+    "source_character": "青玄上人",
+    "overridden": false,
+    "override_reason": ""
+  }
+}
