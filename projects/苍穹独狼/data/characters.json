@@ -391,10 +391,10 @@
     "gender": "",
     "age": "",
     "appearance": "身穿紫色锦袍的青年",
-    "personality": "",
-    "background": "",
-    "goals": "",
-    "speaking_style": "",
+    "personality": "阴险狡诈，表面风度翩翩实则心机深沉，嫉妒心强，不甘被人超越，善于伪装",
+    "background": "天剑阁外门第一人，筑基期修为，自视甚高。被叶青云以炼气圆满击败后心生怨恨",
+    "goals": "超越叶青云，夺回外门第一的名号",
+    "speaking_style": "言语客气但暗藏锋芒，喜欢用激将法和反话",
     "abilities": [
       "筑基期修为",
       "紫色剑意（未命名）",
@@ -402,13 +402,25 @@
       "剑意雏形（已领悟）"
     ],
     "relationships": {
-      "叶青云": "对手，被击败后承认失败"
+      "叶青云": "对手"
     },
     "cultivation": "筑基期",
     "status": "被叶青云击败",
     "first_appeared": 3,
     "arc": "",
-    "notes": "外门试炼决赛对手，筑基期修为"
+    "notes": "外门试炼决赛对手，筑基期修为",
+    "relationships_detail": {
+      "叶青云": {
+        "type": "对手",
+        "stance": "adversarial",
+        "met_chapter": 3,
+        "met_context": "内门入门考核决赛，赵无极主动挑衅叶青云",
+        "key_events": [
+          "第3章外门试炼挑衅并被击败"
+        ],
+        "notes": "赵无极表面认输内心怨恨"
+      }
+    }
   },
   "神秘黑袍人": {
     "name": "神秘黑袍人",

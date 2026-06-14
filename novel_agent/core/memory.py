@@ -19,6 +19,17 @@ from dataclasses import dataclass, asdict, field
 # ============ 数据结构定义 ============
 
 @dataclass
+class RelationshipRecord:
+    """人物关系详细记录"""
+    type: str                         # 关系类型（对手/师徒/盟友/宿敌/亲友/上下级/陌生人…）
+    stance: str = "neutral"           # 立场：friendly(友好)/neutral(中立)/hostile(敌对)/adversarial(对立)
+    met_chapter: int = 0              # 认识的章节
+    met_context: str = ""             # 在什么情况下认识的
+    key_events: List[str] = field(default_factory=list)  # 关键事件列表（如"第3章挑衅并败北"）
+    notes: str = ""                   # 补充说明
+
+
+@dataclass
 class CharacterProfile:
     """人物档案"""
     name: str                          # 姓名
@@ -30,7 +41,8 @@ class CharacterProfile:
     goals: str = ""                   # 目标/动机
     speaking_style: str = ""           # 语言风格（口头禅、说话方式）
     abilities: List[str] = field(default_factory=list)  # 能力/功法
-    relationships: Dict[str, str] = field(default_factory=dict)  # {人物名: 关系}
+    relationships: Dict[str, str] = field(default_factory=dict)  # {人物名: 关系} (兼容旧格式)
+    relationships_detail: Dict[str, dict] = field(default_factory=dict)  # {人物名: RelationshipRecord详情}
     cultivation: str = ""             # 修为境界（如：炼气圆满、筑基初期、金丹中期）
     status: str = "alive"             # 状态：alive/dead/missing
     first_appeared: int = 1          # 首次出现章节
@@ -80,6 +92,34 @@ class WorldSetting:
     chapter_introduced: int = 1  # 首次引入章节
 
 
+@dataclass
+class SectFaction:
+    """势力/宗派档案"""
+    name: str                         # 势力名
+    type: str = ""                    # 类型（宗门/家族/王朝/教派/组织等）
+    description: str = ""             # 描述
+    strength: str = ""                # 整体实力
+    hierarchy: List[str] = field(default_factory=list)  # 层级结构（如["宗主", "长老", "内门弟子", "外门弟子"]）
+    key_members: List[str] = field(default_factory=list)  # 核心成员
+    allies: List[str] = field(default_factory=list)       # 盟友
+    enemies: List[str] = field(default_factory=list)      # 敌对势力
+    location: str = ""                # 所在地
+    rules: List[str] = field(default_factory=list)        # 势力规矩/门规
+    first_appeared: int = 1           # 首次出现章节
+    notes: str = ""
+
+
+@dataclass
+class SceneEvent:
+    """场景事件记录（在哪个地点发生了什么）"""
+    chapter: int                      # 章节号
+    location: str                     # 地点名
+    scene: str = ""                   # 场景标识（开场/中段/结尾）
+    event: str = ""                   # 发生了什么
+    characters: List[str] = field(default_factory=list)  # 参与人物
+    importance: int = 1               # 重要性 1-5
+
+
 # ============ 主管理类 ============
 
 class MemoryManager:
@@ -92,6 +132,8 @@ class MemoryManager:
         self.world_settings: Dict[str, WorldSetting] = {}
         self.plot_rules: Dict[str, PlotRule] = {}
         self.character_knowledge: Dict[str, List[CharacterKnowledge]] = {}  # {角色名: [Knowledge...]}
+        self.sect_factions: Dict[str, SectFaction] = {}
+        self.scene_events: List[SceneEvent] = []
         self._load_all()
 
     # ---------- 持久化 ----------
@@ -101,6 +143,8 @@ class MemoryManager:
         self._load_world_settings()
         self._load_plot_rules()
         self._load_character_knowledge()
+        self._load_sect_factions()
+        self._load_scene_events()
 
     def save_all(self):
         self._save_characters()
@@ -108,6 +152,8 @@ class MemoryManager:
         self._save_world_settings()
         self._save_plot_rules()
         self._save_character_knowledge()
+        self._save_sect_factions()
+        self._save_scene_events()
 
     def _save_json(self, filename: str, data: dict):
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -129,7 +175,11 @@ class MemoryManager:
     def _load_characters(self):
         data = self._load_json("characters.json")
         for name, d in data.items():
-            self.characters[name] = CharacterProfile(**d)
+            # 兼容旧数据：过滤掉 CharacterProfile 中不存在的字段
+            import dataclasses
+            valid_fields = {f.name for f in dataclasses.fields(CharacterProfile)}
+            filtered = {k: v for k, v in d.items() if k in valid_fields}
+            self.characters[name] = CharacterProfile(**filtered)
 
     def add_character(self, profile: CharacterProfile):
         self.characters[profile.name] = profile
@@ -159,9 +209,98 @@ class MemoryManager:
             f"目标：{c.goals}",
             f"语言风格：{c.speaking_style}",
             f"能力：{', '.join(c.abilities)}",
-            f"人物关系：{c.relationships}",
-            f"当前状态：{c.status}",
         ]
+        # 关系：优先展示详细关系，兼容旧格式
+        if c.relationships_detail:
+            lines.append("人物关系（详细）：")
+            stance_map = {"friendly": "🟢友好", "neutral": "⚪中立", "hostile": "🔴敌对", "adversarial": "🟠对立"}
+            for other, detail in c.relationships_detail.items():
+                rel_type = detail.get("type", detail.get("relation", ""))
+                stance = detail.get("stance", "neutral")
+                stance_tag = stance_map.get(stance, stance)
+                met_ch = detail.get("met_chapter", detail.get("chapter_met", 0))
+                met_ctx = detail.get("met_context", detail.get("how_met", ""))
+                key_events = detail.get("key_events", [])
+                parts = [f"{other}（{rel_type}·{stance_tag}）"]
+                if met_ch > 0:
+                    parts.append(f"第{met_ch}章认识")
+                if met_ctx:
+                    parts.append(f"「{met_ctx}」")
+                if key_events:
+                    parts.append("事件：" + "；".join(key_events))
+                lines.append(f"  - {'，'.join(parts)}")
+        elif c.relationships:
+            lines.append(f"人物关系：{c.relationships}")
+        lines.append(f"当前状态：{c.status}")
+        return "\n".join(lines)
+
+    def add_relationship(self, char_name: str, related_to: str, type: str,
+                         stance: str = "neutral", met_chapter: int = 0,
+                         met_context: str = "", key_events: List[str] = None,
+                         notes: str = ""):
+        """添加或更新人物关系（含详细上下文）"""
+        if char_name not in self.characters:
+            return
+        char = self.characters[char_name]
+        # 更新简略关系（兼容）
+        char.relationships[related_to] = type
+        # 更新详细关系
+        detail = {
+            "type": type,
+            "stance": stance,
+            "met_chapter": met_chapter,
+            "met_context": met_context,
+            "key_events": key_events or [],
+            "notes": notes,
+        }
+        char.relationships_detail[related_to] = detail
+        self._save_characters()
+
+    def update_relationship_event(self, char_name: str, related_to: str, event: str):
+        """追加关系关键事件"""
+        if char_name not in self.characters:
+            return
+        char = self.characters[char_name]
+        if related_to not in char.relationships_detail:
+            return
+        events = char.relationships_detail[related_to].get("key_events", [])
+        if event not in events:
+            events.append(event)
+            char.relationships_detail[related_to]["key_events"] = events
+            self._save_characters()
+
+    def get_all_relationships_prompt(self) -> str:
+        """生成所有人物关系的详细上下文文本（用于审校时判断角色是否认识、立场是否正确）"""
+        stance_map = {"friendly": "🟢友好", "neutral": "⚪中立", "hostile": "🔴敌对", "adversarial": "🟠对立"}
+        lines = ["【人物关系详细记录（审校时用于判断角色是否应该认识、关系立场是否正确）】"]
+        has_detail = False
+        for name, char in self.characters.items():
+            if not char.relationships_detail:
+                continue
+            for other, detail in char.relationships_detail.items():
+                has_detail = True
+                rel_type = detail.get("type", detail.get("relation", "未知"))
+                stance = detail.get("stance", "neutral")
+                stance_tag = stance_map.get(stance, stance)
+                met_ch = detail.get("met_chapter", detail.get("chapter_met", 0))
+                met_ctx = detail.get("met_context", detail.get("how_met", ""))
+                key_events = detail.get("key_events", [])
+                parts = [f"  {name} ↔ {other}（{rel_type}·{stance_tag}）"]
+                if met_ch > 0:
+                    parts.append(f"：第{met_ch}章")
+                if met_ctx:
+                    parts.append(f"，在「{met_ctx}」中认识")
+                if key_events:
+                    parts.append(f"，关键事件：「{'」「'.join(key_events)}」")
+                lines.append("".join(parts))
+        if not has_detail:
+            lines.append("  （暂无详细关系记录）")
+        lines.append("")
+        lines.append("⚠️ 审校时必须检查：")
+        lines.append("  1. 如果角色A和角色B在关系记录中已认识，则后续章节中双方不应表现出互不认识。")
+        lines.append("  2. 如果关系记录中两个角色的立场是「敌对/对立」，则后续章节中不应突然表现亲密无间，除非有充分剧情转折。")
+        lines.append("  3. 如果关系记录中两个角色的立场是「友好」，则后续章节中不应突然反目成仇，除非有充分剧情铺垫。")
+        lines.append("  4. 如果正文中出现了密切互动但关系记录中未记载，需标记为中/低严重性问题并建议补充关系记录。")
         return "\n".join(lines)
 
     def get_all_characters_prompt(self) -> str:
@@ -292,6 +431,108 @@ class MemoryManager:
         if len(lines) == 1:
             return "（无角色认知记录）"
         lines.append("\n⚠️ 以上角色已在正文中获知这些信息。后续章节中，角色对这些信息不应再表现出惊讶、好奇或首次获知的反应。角色只能基于已知信息做决策，不能使用未知信息。")
+        return "\n".join(lines)
+
+    # ---------- 势力/宗派 ----------
+    def _save_sect_factions(self):
+        data = {k: asdict(v) for k, v in self.sect_factions.items()}
+        self._save_json("sect_factions.json", data)
+
+    def _load_sect_factions(self):
+        data = self._load_json("sect_factions.json")
+        if isinstance(data, list):
+            data = {}
+        self.sect_factions = {}
+        for name, d in data.items():
+            if isinstance(d, dict):
+                import dataclasses
+                valid_fields = {f.name for f in dataclasses.fields(SectFaction)}
+                filtered = {k: v for k, v in d.items() if k in valid_fields}
+                self.sect_factions[name] = SectFaction(**filtered)
+
+    def add_sect_faction(self, faction: SectFaction):
+        """添加势力/宗派"""
+        self.sect_factions[faction.name] = faction
+        self._save_sect_factions()
+
+    def update_sect_faction(self, name: str, **kwargs):
+        """更新势力/宗派信息"""
+        if name not in self.sect_factions:
+            return
+        faction = self.sect_factions[name]
+        for k, v in kwargs.items():
+            if hasattr(faction, k):
+                if isinstance(getattr(faction, k), list) and isinstance(v, list):
+                    # 列表类型：追加去重
+                    existing = getattr(faction, k)
+                    for item in v:
+                        if item not in existing:
+                            existing.append(item)
+                elif v:
+                    setattr(faction, k, v)
+        self._save_sect_factions()
+
+    def get_sect_factions_prompt(self) -> str:
+        """生成势力/宗派信息文本"""
+        if not self.sect_factions:
+            return "（无势力/宗派记录）"
+        lines = ["【势力/宗派档案】"]
+        for name, f in self.sect_factions.items():
+            lines.append(f"\n  🏛️ {name}（{f.type}）")
+            if f.description:
+                lines.append(f"    描述：{f.description}")
+            if f.strength:
+                lines.append(f"    实力：{f.strength}")
+            if f.hierarchy:
+                lines.append(f"    层级：{' → '.join(f.hierarchy)}")
+            if f.key_members:
+                lines.append(f"    核心成员：{', '.join(f.key_members)}")
+            if f.allies:
+                lines.append(f"    盟友：{', '.join(f.allies)}")
+            if f.enemies:
+                lines.append(f"    敌对：{', '.join(f.enemies)}")
+            if f.location:
+                lines.append(f"    所在地：{f.location}")
+            if f.rules:
+                lines.append(f"    门规：{'；'.join(f.rules)}")
+        return "\n".join(lines)
+
+    # ---------- 场景事件 ----------
+    def _save_scene_events(self):
+        data = [asdict(e) for e in self.scene_events]
+        self._save_json("scene_events.json", data)
+
+    def _load_scene_events(self):
+        data = self._load_json("scene_events.json")
+        self.scene_events = []
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    import dataclasses
+                    valid_fields = {f.name for f in dataclasses.fields(SceneEvent)}
+                    filtered = {k: v for k, v in item.items() if k in valid_fields}
+                    self.scene_events.append(SceneEvent(**filtered))
+
+    def add_scene_event(self, event: SceneEvent):
+        """添加场景事件"""
+        self.scene_events.append(event)
+        self._save_scene_events()
+
+    def get_scene_events_prompt(self, chapter: int = 0) -> str:
+        """生成场景事件文本（用于审校时检查场景一致性）"""
+        if not self.scene_events:
+            return "（无场景事件记录）"
+        events = self.scene_events
+        if chapter > 0:
+            events = [e for e in events if e.chapter < chapter]
+        if not events:
+            return "（无场景事件记录）"
+        lines = ["【场景事件记录（审校时用于检查事件发生地点是否正确）】"]
+        # 按章节倒序，只显示最近10章
+        recent = sorted(events, key=lambda e: e.chapter, reverse=True)[:20]
+        for e in recent:
+            chars = f"（{', '.join(e.characters)}）" if e.characters else ""
+            lines.append(f"  第{e.chapter}章·{e.location}：{e.event}{chars}")
         return "\n".join(lines)
 
     # ---------- 导出（给可视化用）----------
