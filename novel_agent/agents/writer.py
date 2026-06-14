@@ -61,6 +61,9 @@ CHAPTER_WRITER_USER_PROMPT = """请创作第{chapter}章：{title}
 ## 出场人物
 {characters}
 
+## ⚠️ 一致性契约（写作前必须逐条确认，不可违反）
+{generation_contract}
+
 ## 前文连续性摘要
 {continuity_prompt}
 
@@ -135,6 +138,9 @@ CHAPTER_REVISER_USER_PROMPT = """请修订第{chapter}章：{title}
 ## 出场人物
 {characters}
 
+## ⚠️ 一致性契约（修订时必须逐条确认，不可违反）
+{generation_contract}
+
 ## 前文连续性摘要
 {continuity_prompt}
 
@@ -200,6 +206,14 @@ class WriterAgent:
         warnings = self.continuity.check_continuity(chapter, char_loc_map, time_tag)
         warning_text = "\n".join(warnings) if warnings else "无冲突"
 
+        # 1.5 预检 + 生成前一致性契约
+        pre_warnings = self.memory.validate_chapter_characters(chapter, characters)
+        if pre_warnings:
+            print("  [预检] 发现潜在问题：")
+            for w in pre_warnings:
+                print(f"    {w}")
+        generation_contract = self.memory.get_generation_contract(chapter, characters)
+
         # 2. 构建 prompt
         system_prompt = CHAPTER_WRITER_SYSTEM_PROMPT.format(
             genre=self.genre,
@@ -244,6 +258,7 @@ class WriterAgent:
             time_tag=time_tag,
             location=location,
             characters="、".join(characters),
+            generation_contract=generation_contract,
             continuity_prompt=continuity_prompt,
             character_prompts=character_prompts if character_prompts else "（无）",
             world_settings=self.memory.get_world_settings_prompt(),
@@ -364,6 +379,9 @@ class WriterAgent:
         # 伏笔 prompt
         foreshadow_prompt = self.foreshadow.generate_foreshadow_prompt(chapter)
 
+        # 一致性契约
+        generation_contract = self.memory.get_generation_contract(chapter, characters)
+
         user_prompt = CHAPTER_REVISER_USER_PROMPT.format(
             chapter=chapter,
             title=title,
@@ -373,6 +391,7 @@ class WriterAgent:
             time_tag=time_tag,
             location=location,
             characters="、".join(characters),
+            generation_contract=generation_contract,
             continuity_prompt=continuity_prompt,
             character_prompts=character_prompts if character_prompts else "（无）",
             world_settings=self.memory.get_world_settings_prompt(),

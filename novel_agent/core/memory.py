@@ -535,6 +535,110 @@ class MemoryManager:
             lines.append(f"  第{e.chapter}章·{e.location}：{e.event}{chars}")
         return "\n".join(lines)
 
+    # ---------- 生成前一致性约束 ----------
+    def get_generation_contract(self, chapter: int, characters: List[str]) -> str:
+        """
+        生成「一致性契约」—— 写作前必须遵守的硬性约束清单。
+        针对本章出场人物，提取性格、关系、认知等所有约束。
+        """
+        stance_map = {"friendly": "🟢友好", "neutral": "⚪中立", "hostile": "🔴敌对", "adversarial": "🟠对立"}
+        lines = [f"【第{chapter}章 一致性契约（写作前必须逐条确认，不可违反）】"]
+        has_content = False
+
+        for char_name in characters:
+            if char_name not in self.characters:
+                continue
+            c = self.characters[char_name]
+            has_content = True
+            lines.append(f"\n  ═══ {char_name} ═══")
+
+            # 1. 性格锁定
+            if c.personality:
+                lines.append(f"  🔒 性格锁定：{c.personality}")
+                lines.append(f"     → 本章中 {char_name} 的所有言行必须符合此性格。不得出现与性格矛盾的行为（除非有充分的剧情转折铺垫）。")
+
+            # 2. 语言风格锁定
+            if c.speaking_style:
+                lines.append(f"  🔒 语言风格：{c.speaking_style}")
+
+            # 3. 修为锁定
+            if c.cultivation:
+                lines.append(f"  🔒 当前修为：{c.cultivation}")
+                lines.append(f"     → 不得超出此修为范围使用能力（除非本章有突破描写）。")
+
+            # 4. 关系锁定
+            if c.relationships_detail:
+                lines.append(f"  🔒 已有关系（不可随意改变立场，除非有剧情转折）：")
+                for other, detail in c.relationships_detail.items():
+                    rel_type = detail.get("type", "")
+                    stance = detail.get("stance", "neutral")
+                    stance_tag = stance_map.get(stance, stance)
+                    lines.append(f"     → {char_name} ↔ {other}：{rel_type}（{stance_tag}）")
+                    key_events = detail.get("key_events", [])
+                    if key_events:
+                        lines.append(f"       历史事件：{'；'.join(key_events)}")
+
+            # 5. 认知锁定
+            if char_name in self.character_knowledge:
+                known = [k for k in self.character_knowledge[char_name] if k.chapter_learned < chapter]
+                if known:
+                    lines.append(f"  🔒 已知信息（{char_name} 已经知道，不得表现出惊讶/首次获知）：")
+                    for k in known:
+                        lines.append(f"     → {k.knowledge}（第{k.chapter_learned}章，{k.source}）")
+
+        # 6. 全局规则锁定
+        active_rules = [r for r in self.plot_rules.values() if not r.overridden]
+        if active_rules:
+            has_content = True
+            lines.append(f"\n  ═══ 剧情规则（不可违反）═══")
+            for r in active_rules:
+                source = f"（{r.source_character}，第{r.chapter_introduced}章）" if r.source_character else f"（第{r.chapter_introduced}章）"
+                lines.append(f"  ⚖️ IF「{r.condition}」→ THEN「{r.consequence}」{source}")
+
+        # 7. 关系交叉检查
+        lines.append(f"\n  ═══ 出场人物关系网 ═══")
+        has_rel = False
+        for i, a in enumerate(characters):
+            for b in characters[i+1:]:
+                if a in self.characters and b in self.characters:
+                    char_a = self.characters[a]
+                    if b in char_a.relationships_detail:
+                        has_rel = True
+                        detail = char_a.relationships_detail[b]
+                        rel_type = detail.get("type", "")
+                        stance = detail.get("stance", "neutral")
+                        stance_tag = stance_map.get(stance, stance)
+                        lines.append(f"  🔗 {a} ↔ {b}：{rel_type}（{stance_tag}）")
+        if not has_rel:
+            lines.append(f"  （出场人物之间暂无已记录的关系）")
+
+        if not has_content:
+            return "（无特殊一致性约束）"
+        lines.append(f"\n  ⚠️ 以上所有约束均为硬性要求。违反任何一条都将导致剧情矛盾。")
+        return "\n".join(lines)
+
+    def validate_chapter_characters(self, chapter: int, characters: List[str]) -> List[str]:
+        """
+        预检：检查出场人物是否与已有数据冲突。
+        返回警告列表（空=无问题）。
+        """
+        warnings = []
+        for char_name in characters:
+            if char_name not in self.characters:
+                continue
+            c = self.characters[char_name]
+
+            # 检查：已死亡角色不能出场（除非有复活设定）
+            if c.status == "dead":
+                warnings.append(f"⚠️ 预检：{char_name} 已标记为死亡（status=dead），但本章计划出场。如非复活剧情请修正。")
+
+            # 检查：角色认知——如果某角色不知道的信息，大纲中却安排他使用该信息
+            if char_name in self.character_knowledge:
+                # 只是记录，不阻断
+                pass
+
+        return warnings
+
     # ---------- 导出（给可视化用）----------
     def export_character_relations(self) -> List[Dict]:
         """
