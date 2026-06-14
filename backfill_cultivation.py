@@ -13,8 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 config.set_project('苍穹独狼')
 
-from memory import MemoryManager
-from generator import generate
+from novel_agent.core.memory import MemoryManager
+from novel_agent.llm.client import generate
 
 memory = MemoryManager()
 

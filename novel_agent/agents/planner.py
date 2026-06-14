@@ -8,10 +8,10 @@ planner_agent.py - 大纲规划 Agent
 """
 
 from typing import Dict, List
-from memory import MemoryManager, CharacterProfile, LocationProfile, WorldSetting
-from continuity import ContinuityGuard, SpaceNode
-from foreshadow import ForeshadowTracker
-from generator import generate
+from novel_agent.core.memory import MemoryManager, CharacterProfile, LocationProfile, WorldSetting
+from novel_agent.core.continuity import ContinuityGuard, SpaceNode
+from novel_agent.core.foreshadow import ForeshadowTracker
+from novel_agent.llm.client import generate
 
 
 # ---------- Prompt 模板 ----------

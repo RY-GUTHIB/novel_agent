@@ -35,18 +35,18 @@ if sys.platform == "win32":
 
 # 本地模块
 import config
-from project import (
+from novel_agent.project import (
     list_projects, load_project_config, save_project_config,
     create_project, get_project_paths, update_project_progress,
     NOVEL_TYPES, NOVEL_STYLES, PROJECTS_ROOT,
 )
-from memory import MemoryManager
-from continuity import ContinuityGuard
-from foreshadow import ForeshadowTracker
-from planner_agent import PlannerAgent
-from writer_agent import WriterAgent
-from reviewer_agent import ReviewerAgent
-from visualizer import generate_all_visualizations
+from novel_agent.core.memory import MemoryManager
+from novel_agent.core.continuity import ContinuityGuard
+from novel_agent.core.foreshadow import ForeshadowTracker
+from novel_agent.agents.planner import PlannerAgent
+from novel_agent.agents.writer import WriterAgent
+from novel_agent.agents.reviewer import ReviewerAgent
+from novel_agent.visualizer import generate_all_visualizations
 
 # 当前项目标记文件
 _CURRENT_PROJECT_FILE = Path(__file__).parent / ".current_project"

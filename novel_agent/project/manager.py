@@ -6,7 +6,8 @@ import json
 import os
 from pathlib import Path
 
-PROJECTS_ROOT = Path(__file__).parent / "projects"
+# 从 config 导入 PROJECTS_ROOT（config.py 在项目根目录，运行时已在 sys.path 中）
+from config import PROJECTS_ROOT
 CONFIG_FILE = "config.json"
 
 # 支持的小说类型

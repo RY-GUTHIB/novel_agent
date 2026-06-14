@@ -13,7 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from config import set_project
 set_project("苍穹独狼")
 
-from memory import MemoryManager, CharacterKnowledge
+from novel_agent.core.memory import MemoryManager, CharacterKnowledge
 
 memory = MemoryManager()
 

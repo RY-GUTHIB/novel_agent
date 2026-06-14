@@ -14,14 +14,14 @@ import config
 from pathlib import Path
 from typing import List, Dict
 
-from memory import MemoryManager
-from continuity import ContinuityGuard
+from novel_agent.core.memory import MemoryManager
+from novel_agent.core.continuity import ContinuityGuard
 
 # ============ 内嵌 JS/CSS（离线可用）============
 
 def _load_vendor(file_name: str) -> str:
     """读取 vendor 目录下的 JS/CSS 文件内容"""
-    vendor_path = Path(__file__).parent / "vendor" / file_name
+    vendor_path = Path(__file__).parent.parent.parent / "vendor" / file_name
     if vendor_path.exists():
         with open(vendor_path, "r", encoding="utf-8") as f:
             return f.read()

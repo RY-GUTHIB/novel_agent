@@ -3,8 +3,8 @@ backfill_spatial.py - 从已写章节中补录空间移动数据到 character_lo
 """
 import json
 import config
-from continuity import ContinuityGuard, SpaceNode
-from generator import generate
+from novel_agent.core.continuity import ContinuityGuard, SpaceNode
+from novel_agent.llm.client import generate
 
 config.set_project("苍穹独狼")
 continuity = ContinuityGuard()

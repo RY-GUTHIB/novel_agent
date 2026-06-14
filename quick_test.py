@@ -14,13 +14,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import config
 # 使用默认路径（data/ 和 output/），不走项目系统
-from memory import MemoryManager, CharacterProfile, LocationProfile
-from continuity import ContinuityGuard
-from foreshadow import ForeshadowTracker
-from planner_agent import PlannerAgent
-from writer_agent import WriterAgent
-from reviewer_agent import ReviewerAgent
-from visualizer import generate_timeline_html, generate_character_map_html, generate_world_map_html
+from novel_agent.core.memory import MemoryManager, CharacterProfile, LocationProfile
+from novel_agent.core.continuity import ContinuityGuard
+from novel_agent.core.foreshadow import ForeshadowTracker
+from novel_agent.agents.planner import PlannerAgent
+from novel_agent.agents.writer import WriterAgent
+from novel_agent.agents.reviewer import ReviewerAgent
+from novel_agent.visualizer import generate_timeline_html, generate_character_map_html, generate_world_map_html
 
 TEST_GENRE = "玄幻"
 TEST_STYLE = "热血"

@@ -9,10 +9,10 @@ reviewer_agent.py - 审校 Agent
 """
 
 from typing import Dict, List
-from memory import MemoryManager
-from continuity import ContinuityGuard
-from foreshadow import ForeshadowTracker
-from generator import generate
+from novel_agent.core.memory import MemoryManager
+from novel_agent.core.continuity import ContinuityGuard
+from novel_agent.core.foreshadow import ForeshadowTracker
+from novel_agent.llm.client import generate
 import config
 
 

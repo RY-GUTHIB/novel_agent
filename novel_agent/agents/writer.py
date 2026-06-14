@@ -14,11 +14,11 @@ import config
 from pathlib import Path
 from typing import Dict, List
 
-from generator import generate
-from memory import MemoryManager
-from continuity import ContinuityGuard, SpaceNode
-from foreshadow import ForeshadowTracker
-from rag_store import RAGStore
+from novel_agent.llm.client import generate
+from novel_agent.core.memory import MemoryManager
+from novel_agent.core.continuity import ContinuityGuard, SpaceNode
+from novel_agent.core.foreshadow import ForeshadowTracker
+from novel_agent.core.rag import RAGStore
 
 
 # ---------- Prompt 模板 ----------
