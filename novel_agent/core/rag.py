@@ -12,17 +12,16 @@ rag_store.py - 向量数据库（RAG检索增强）
 
 import json
 import re
+import config
 from pathlib import Path
 from typing import List, Dict
-
-from config import DATA_DIR, RAG_TOP_K, RAG_CHUNK_SIZE
 
 
 class RAGStore:
     """ChromaDB 向量存储封装"""
 
     def __init__(self, persist_dir: str = None):
-        self.persist_dir = str(Path(persist_dir or DATA_DIR) / "vector_db")
+        self.persist_dir = str(Path(persist_dir or config.DATA_DIR) / "vector_db")
         self._client = None
         self._collection = None
 
@@ -94,7 +93,7 @@ class RAGStore:
             }],
         )
 
-    def search(self, query: str, top_k: int = RAG_TOP_K,
+    def search(self, query: str, top_k: int = config.RAG_TOP_K,
                filter_chapter_lt: int = None) -> List[Dict]:
         """
         语义检索相关片段
@@ -132,7 +131,7 @@ class RAGStore:
 
     def search_by_character(self, character_name: str,
                              current_chapter: int,
-                             top_k: int = RAG_TOP_K) -> List[str]:
+                             top_k: int = config.RAG_TOP_K) -> List[str]:
         """检索某人物相关的历史片段（用于注入prompt）"""
         query = f"{character_name} 的言行 状态 经历"
         results = self.search(query, top_k=top_k,
@@ -141,14 +140,14 @@ class RAGStore:
 
     def search_by_location(self, location_name: str,
                            current_chapter: int,
-                           top_k: int = RAG_TOP_K) -> List[str]:
+                           top_k: int = config.RAG_TOP_K) -> List[str]:
         """检索某地点相关的历史描述"""
         query = f"{location_name} 地点 场景 描述"
         results = self.search(query, top_k=top_k,
                              filter_chapter_lt=current_chapter)
         return [r["document"] for r in results]
 
-    def _chunk_text(self, text: str, chunk_size: int = RAG_CHUNK_SIZE) -> List[str]:
+    def _chunk_text(self, text: str, chunk_size: int = config.RAG_CHUNK_SIZE) -> List[str]:
         """
         智能切片：按段落分割，尽量保持语义完整
         """

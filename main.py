@@ -38,7 +38,7 @@ import config
 from novel_agent.project import (
     list_projects, load_project_config, save_project_config,
     create_project, get_project_paths, update_project_progress,
-    NOVEL_TYPES, NOVEL_STYLES, PROJECTS_ROOT,
+    NOVEL_TYPES, NOVEL_STYLES,
 )
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
@@ -59,7 +59,7 @@ def get_current_project_name():
     if _CURRENT_PROJECT_FILE.exists():
         name = _CURRENT_PROJECT_FILE.read_text(encoding="utf-8").strip()
         # 确认项目仍存在
-        if (PROJECTS_ROOT / name / "config.json").exists():
+        if (config.PROJECTS_ROOT / name / "config.json").exists():
             return name
     return None
 
@@ -122,7 +122,7 @@ def create_new_project() -> str:
             print("❌ 名称不能为空")
             continue
         # 检查是否已存在
-        if (PROJECTS_ROOT / name).exists():
+        if (config.PROJECTS_ROOT / name).exists():
             overwrite = input(f"⚠️  项目「{name}」已存在，覆盖？(y/N)：").strip().lower()
             if overwrite != "y":
                 continue
@@ -229,8 +229,8 @@ def generate_outline(memory, continuity, foreshadow, rag, project_name, genre, s
             print(f"\n💡 LLM 建议标题：「{title}」，当前项目名：「{project_name}」")
             rename = input("   要把项目名改为 LLM 建议的标题吗？(y/N)：").strip().lower()
             if rename == "y":
-                old_dir = PROJECTS_ROOT / project_name
-                new_dir = PROJECTS_ROOT / title
+                old_dir = config.PROJECTS_ROOT / project_name
+                new_dir = config.PROJECTS_ROOT / title
                 if not new_dir.exists():
                     old_dir.rename(new_dir)
                     set_current_project(title)
@@ -604,7 +604,7 @@ def cmd_list():
         if p["concept"]:
             print(f"    构思：{p['concept']}")
     print("-" * 70)
-    print(f"项目目录：{PROJECTS_ROOT}")
+    print(f"项目目录：{config.PROJECTS_ROOT}")
 
 
 # =========== 交互式命令循环 ===========
