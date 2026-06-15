@@ -48,19 +48,33 @@ class PlannerAgent:
 
 请严格按照 JSON 格式输出。"""
 
-        response = generate(
-            system_prompt=PLANNER_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            temperature=0.7,
-            max_tokens=16384,
-        )
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            response = generate(
+                system_prompt=PLANNER_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                temperature=0.7,
+                max_tokens=16384,
+            )
 
-        outline = self._extract_json(response)
-        if outline is None:
-            raise ValueError("大纲生成失败：LLM 返回格式错误，请重试")
+            try:
+                outline = self._extract_json(response)
+            except ValueError as e:
+                if "截断" in str(e) and attempt < max_retries:
+                    print(f"  [WARN] JSON 解析失败: {e}，重试 ({attempt+2}/{max_retries+1})...")
+                    user_prompt += "\n\n⚠️ 上次输出 JSON 被截断。请精简输出，确保 JSON 完整闭合。只输出 JSON，不要加解释文字。"
+                    continue
+                raise
 
-        self._init_from_outline(outline)
-        return outline
+            if outline is not None:
+                self._init_from_outline(outline)
+                return outline
+
+            if attempt < max_retries:
+                print(f"  [WARN] JSON 解析失败，重试 ({attempt+2}/{max_retries+1})...")
+                user_prompt += "\n\n⚠️ 请只输出 JSON，不要加任何解释文字或 markdown 标记。"
+
+        raise ValueError("大纲生成失败：LLM 返回格式错误，已重试3次仍无法解析")
 
     def refine_outline(self, current_outline: Dict, user_request: str) -> Dict:
         user_prompt = OUTLINE_REFINE_PROMPT.format(
@@ -173,18 +187,22 @@ class PlannerAgent:
 
     @staticmethod
     def _extract_json(text: str) -> Dict:
+        """从 LLM 输出中提取 JSON，多层 fallback + 截断检测 + 修复尝试"""
+        # 第1层：直接解析
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
 
-        match = re.search(r'```json\s*([\s\S]*?)\s*```', text)
+        # 第2层：提取 markdown 代码块
+        match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
         if match:
             try:
                 return json.loads(match.group(1))
             except json.JSONDecodeError:
                 pass
 
+        # 第3层：提取最外层大括号（贪婪匹配到最后一个 }）
         match = re.search(r'\{[\s\S]*\}', text)
         if match:
             try:
@@ -192,16 +210,37 @@ class PlannerAgent:
             except json.JSONDecodeError:
                 pass
 
+        # 第4层：检测截断并尝试修复
         match = re.search(r'\{[\s\S]*', text)
         if match:
             partial = match.group(0)
-            open_braces = partial.count('{') - partial.count('}')
-            open_brackets = partial.count('[') - partial.count(']')
+            # 用栈精确计算括号平衡
+            stack = []
+            for ch in partial:
+                if ch in '{[':
+                    stack.append(ch)
+                elif ch == '}':
+                    if stack and stack[-1] == '{':
+                        stack.pop()
+                    else:
+                        stack.append(ch)
+                elif ch == ']':
+                    if stack and stack[-1] == '[':
+                        stack.pop()
+                    else:
+                        stack.append(ch)
+            open_braces = sum(1 for c in stack if c == '{')
+            open_brackets = sum(1 for c in stack if c == '[')
             if open_braces > 0 or open_brackets > 0:
-                raise ValueError(
-                    f"大纲 JSON 被截断（缺少 {open_braces} 个闭合花括号, {open_brackets} 个闭合方括号）。"
-                    f"请增大 max_tokens 后重试。"
-                )
+                # 尝试补全闭合括号后重新解析
+                repaired = partial + '}' * open_braces + ']' * open_brackets
+                try:
+                    return json.loads(repaired)
+                except json.JSONDecodeError:
+                    raise ValueError(
+                        f"大纲 JSON 被截断（缺少 {open_braces} 个闭合花括号, {open_brackets} 个闭合方括号），"
+                        f"自动补全后仍无法解析。请增大 max_tokens 后重试。"
+                    )
         return None
 
     def save_outline_json(self, outline: Dict, filepath: str = None):

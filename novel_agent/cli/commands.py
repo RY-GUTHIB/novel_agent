@@ -25,7 +25,7 @@ from novel_agent.visualizer import generate_all_visualizations
 
 # =========== 项目管理 ===========
 
-_CURRENT_PROJECT_FILE = Path(__file__).parent.parent.parent / ".current_project"
+_CURRENT_PROJECT_FILE = config.PROJECTS_ROOT / ".current_project"
 
 
 def get_current_project_name():
@@ -305,6 +305,8 @@ def _get_chapter_plan(outline: dict) -> list:
 
 def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, location, characters):
     max_revisions = 3
+    prev_score = None
+    no_improvement_count = 0
     for rev in range(max_revisions + 1):
         report = reviewer.review_chapter(chapter, title, content)
         print(f"\n📋 审校报告（第{rev+1}次）：")
@@ -318,6 +320,17 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
         if rev >= max_revisions:
             print(f"\n⚠️ 已达最大修订次数（{max_revisions}），接受当前版本")
             break
+
+        # 收敛检测：连续2次分数不升则提前终止
+        if prev_score is not None:
+            if report["overall_score"] <= prev_score:
+                no_improvement_count += 1
+                if no_improvement_count >= 2:
+                    print(f"\n⚠️ 连续{no_improvement_count}次修订分数未提升（{prev_score}→{report['overall_score']}），提前终止修订")
+                    break
+            else:
+                no_improvement_count = 0
+        prev_score = report["overall_score"]
 
         print(f"\n🔧 根据审校意见自动修改（第{rev+1}次修订）...")
         content = writer.revise_chapter(

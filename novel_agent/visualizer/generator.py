@@ -46,14 +46,13 @@ def generate_timeline_html(continuity: ContinuityGuard,
     """
     data = continuity.export_timeline_for_viz()
 
-    # 防御性去重：按 chapter 去重，保留第一个
-    import re
-    seen_chapters = set()
+    # 防御性去重：按 chapter+event 去重，保留第一次
+    seen_events = set()
     deduped = []
     for event in data:
-        ch = event.get("chapter", 0)
-        if ch not in seen_chapters:
-            seen_chapters.add(ch)
+        key = (event.get("chapter", 0), event.get("event", ""))
+        if key not in seen_events:
+            seen_events.add(key)
             deduped.append(event)
     data = deduped
 

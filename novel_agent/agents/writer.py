@@ -14,7 +14,7 @@ import config
 from pathlib import Path
 from typing import List
 
-from novel_agent.llm.client import generate
+from novel_agent.llm.client import generate, parse_json, parse_json_array
 from novel_agent.core.models import (
     CharacterProfile, LocationProfile, WorldSetting,
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
@@ -223,8 +223,8 @@ class WriterAgent:
         self.foreshadow._save()
         try:
             self.foreshadow.export_to_markdown()
-        except Exception:
-            pass
+        except (IOError, OSError) as e:
+            print(f"  [WARN] 伏笔总览导出失败: {e}")
 
     def _build_reviser_user_prompt(self, chapter, title, review_report, original_content,
                                      summary, time_tag, location, characters,
@@ -262,8 +262,8 @@ class WriterAgent:
             rag_results = self.rag.search(rag_query, filter_chapter_lt=chapter)
             if rag_results:
                 return "\n\n---\n\n".join(r["document"] for r in rag_results)
-        except Exception:
-            pass
+        except (IOError, OSError, json.JSONDecodeError, ValueError) as e:
+            print(f"  [WARN] RAG 检索失败: {e}")
         return "（无相关前文片段）"
 
     # ========== 写后处理 ==========
@@ -311,8 +311,8 @@ class WriterAgent:
         if self.rag:
             try:
                 self.rag.add_chapter(chapter, title, content)
-            except Exception:
-                pass
+            except (IOError, OSError, json.JSONDecodeError, ValueError) as e:
+                print(f"  [WARN] RAG 存储失败: {e}")
 
         # 4. 保存
         self.continuity.save_all()
@@ -327,8 +327,8 @@ class WriterAgent:
         # 6. 更新伏笔总览
         try:
             self.foreshadow.export_to_markdown()
-        except Exception:
-            pass
+        except (IOError, OSError) as e:
+            print(f"  [WARN] 伏笔总览导出失败: {e}")
 
     # ========== 输出解析 ==========
 
@@ -343,7 +343,7 @@ class WriterAgent:
             # 移除可能的 ```json ... ``` 包裹
             settings_text = re.sub(r'^```json\s*', '', settings_text)
             settings_text = re.sub(r'\s*```$', '', settings_text)
-            settings_json = WriterAgent._parse_json(settings_text)
+            settings_json = parse_json(settings_text)
             if settings_json:
                 print(f"  [合并解析] 正文 {len(content)} 字，设定 JSON 解析成功")
                 return content, settings_json
@@ -374,11 +374,16 @@ class WriterAgent:
     # ========== 伏笔提取 ==========
 
     def _extract_foreshadows(self, content: str, chapter: int) -> List[str]:
-        """从正文中正则提取伏笔（不调 LLM）"""
+        """从正文中正则提取伏笔（不调 LLM）
+        只匹配显式标记 [FS: xxx]，不匹配正文中无意的方括号内容。
+        要求内容至少 4 个中文字符，过滤误匹配。
+        """
         results = []
-        results.extend(re.findall(r'\[FS:\s*(.*?)\s*\]', content))
-        results.extend(re.findall(r'FS：\s*(.*?)(?:\r?\n|$)', content))
-        results.extend(re.findall(r'\[FS：\s*(.*?)\s*\]', content))
+        # 提取 [FS: xxx] 标记，要求内容至少 4 个中文字符
+        # 使用普通字符串（非 raw），避免 Python 3.12+ 的无效转义警告
+        results.extend(re.findall('\\[FS:\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{3,}?)\\s*\\]', content))
+        results.extend(re.findall('FS：\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{3,}?)(?:\\r?\\n|$)', content))
+        results.extend(re.findall('\\[FS：\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{3,}?)\\s*\\]', content))
         return list(set(results))
 
     # ========== 设定提取（已合并到写作 prompt 的 ===SETTINGS_JSON=== 输出，以下方法已废弃）==========
@@ -640,44 +645,6 @@ class WriterAgent:
             print(f"  [设定提取·场景] 新增 {count} 条场景事件")
 
     # ========== JSON 解析工具 ==========
-
-    @staticmethod
-    def _parse_json(text: str):
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-        match = re.search(r'```json\s*([\s\S]*?)\s*```', text)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
-        match = re.search(r'\{[\s\S]*\}', text)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-        return None
-
-    @staticmethod
-    def _parse_json_array(text: str) -> list:
-        try:
-            result = json.loads(text)
-            return result if isinstance(result, list) else []
-        except json.JSONDecodeError:
-            pass
-        match = re.search(r'```json\s*([\s\S]*?)\s*```', text)
-        if match:
-            try:
-                result = json.loads(match.group(1))
-                return result if isinstance(result, list) else []
-            except json.JSONDecodeError:
-                pass
-        return []
-
-    # ========== 文件操作 ==========
 
     def save_chapter(self, chapter: int, title: str, content: str, output_dir: str = None):
         out_dir = Path(output_dir or config.OUTPUT_DIR)

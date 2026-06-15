@@ -202,18 +202,78 @@ def generate_stream(system_prompt: str, user_prompt: str,
         client = OpenAI(base_url=config.OLLAMA_BASE_URL, api_key="ollama")
         model = config.OLLAMA_MODEL
 
-    stream = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=temperature,
-        max_tokens=max_tokens,
-        top_p=config.TOP_P,
-        stream=True,
-    )
-    for chunk in stream:
-        delta = chunk.choices[0].delta.content
-        if delta:
-            yield delta
+    last_exc = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            stream = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=config.TOP_P,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+            return  # 成功
+        except Exception as e:
+            last_exc = e
+            err_str = str(e).lower()
+            if any(kw in err_str for kw in ("invalid_api_key", "authentication", "permission", "401", "403")):
+                raise
+            if attempt < MAX_RETRIES:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning(f"LLM 流式调用失败（第{attempt+1}次），{delay}秒后重试: {e}")
+                time.sleep(delay)
+            else:
+                logger.error(f"LLM 流式调用失败（已重试{MAX_RETRIES}次）: {e}")
+    raise last_exc
+
+
+# ========== 公共 JSON 解析工具（供 planner/writer 等模块共用）==========
+
+import json as _json
+import re as _re
+
+
+def parse_json(text: str) -> dict:
+    """从 LLM 输出中提取 JSON 对象，多层 fallback"""
+    try:
+        return _json.loads(text)
+    except _json.JSONDecodeError:
+        pass
+    match = _re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+    if match:
+        try:
+            return _json.loads(match.group(1))
+        except _json.JSONDecodeError:
+            pass
+    match = _re.search(r'\{[\s\S]*\}', text)
+    if match:
+        try:
+            return _json.loads(match.group(0))
+        except _json.JSONDecodeError:
+            pass
+    return None
+
+
+def parse_json_array(text: str) -> list:
+    """从 LLM 输出中提取 JSON 数组，多层 fallback"""
+    try:
+        result = _json.loads(text)
+        return result if isinstance(result, list) else []
+    except _json.JSONDecodeError:
+        pass
+    match = _re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+    if match:
+        try:
+            result = _json.loads(match.group(1))
+            return result if isinstance(result, list) else []
+        except _json.JSONDecodeError:
+            pass
+    return []
