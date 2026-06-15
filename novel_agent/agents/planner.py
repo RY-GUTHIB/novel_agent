@@ -10,7 +10,7 @@ planner_agent.py - 大纲规划 Agent
 import json
 import re
 import logging
-from typing import Dict, List
+from typing import Dict
 
 from novel_agent.core.models import CharacterProfile, LocationProfile, WorldSetting
 from novel_agent.core.memory import MemoryManager

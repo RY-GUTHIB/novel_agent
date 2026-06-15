@@ -10,7 +10,6 @@ rag_store.py - 向量数据库（RAG检索增强）
 3. 检索维度：人物状态、地点描述、伏笔、时间线事件
 """
 
-import json
 import re
 import config
 from pathlib import Path
@@ -31,7 +30,6 @@ class RAGStore:
             return
         try:
             import chromadb
-            from chromadb.config import Settings
         except ImportError:
             raise ImportError("请先安装 chromadb: pip install chromadb>=0.5.0")
 

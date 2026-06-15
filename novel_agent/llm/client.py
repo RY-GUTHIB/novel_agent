@@ -5,8 +5,6 @@ generator.py - LLM调用封装（多后端支持）
     response = generate(prompt, system_prompt=..., temperature=...)
 """
 
-import os
-import json
 import time
 import logging
 import config

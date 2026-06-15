@@ -3,9 +3,7 @@
 负责：列出所有小说项目、创建新项目、切换当前项目、读取/保存项目配置
 """
 import json
-import os
 import config
-from pathlib import Path
 
 CONFIG_FILE = "config.json"
 

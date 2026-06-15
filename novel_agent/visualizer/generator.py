@@ -12,7 +12,7 @@ visualizer.py - 三大可视化生成器
 import json
 import config
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict
 
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
