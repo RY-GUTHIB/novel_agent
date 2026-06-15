@@ -9,3 +9,4 @@ from .memory import MemoryManager
 from .continuity import ContinuityGuard
 from .foreshadow import ForeshadowTracker
 from .rag import RAGStore
+from .validator import ContractValidator, ContractViolation, format_violations_report

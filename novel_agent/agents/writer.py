@@ -23,6 +23,7 @@ from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
 from novel_agent.core.rag import RAGStore
+from novel_agent.core.validator import ContractValidator, format_violations_report
 from .prompts import (
     CHAPTER_WRITER_SYSTEM_PROMPT, CHAPTER_WRITER_USER_PROMPT,
     CHAPTER_REVISER_SYSTEM_PROMPT, CHAPTER_REVISER_USER_PROMPT,
@@ -45,6 +46,7 @@ class WriterAgent:
         self.rag = rag_store
         self.genre = genre
         self.style = style
+        self.validator = ContractValidator()
 
     # ========== 核心生成 ==========
 
@@ -200,13 +202,23 @@ class WriterAgent:
 
     def _post_write(self, chapter, title, content, summary, time_tag,
                      location, characters, skip_scan=False, settings_json=None):
-        # 提取伏笔
+        # 0. 契约校验（生成后立即检查，不调 LLM）
+        violations = self.validator.validate(content, chapter, characters, self.memory)
+        if violations:
+            report = format_violations_report(violations)
+            print(f"\n{report}")
+            # 高严重性问题数
+            high_count = sum(1 for v in violations if v.severity == "高")
+            if high_count > 0:
+                print(f"  ⚠️ 发现 {high_count} 个高严重性契约违反，建议审校时重点关注")
+
+        # 1. 提取伏笔
         new_fs = self._extract_foreshadows(content, chapter, skip_scan=skip_scan)
         for fs_content in new_fs:
             self.foreshadow.plant(chapter=chapter, content=fs_content, type="mystery",
                                   related_characters=characters, importance=2)
 
-        # 更新连续性
+        # 2. 更新连续性
         self.continuity.add_event(chapter=chapter, time_tag=time_tag, event=summary,
                                   characters=characters, location=location, importance=3)
         for char in characters:
@@ -218,24 +230,24 @@ class WriterAgent:
             if char in self.memory.characters:
                 self.memory.update_character_status(char, notes=f"第{chapter}章出现于{location}")
 
-        # RAG 存储
+        # 3. RAG 存储
         if self.rag:
             try:
                 self.rag.add_chapter(chapter, title, content)
             except Exception:
                 pass
 
-        # 保存
+        # 4. 保存
         self.continuity.save_all()
         self.foreshadow._save()
 
-        # 应用设定（从合并输出中解析）
+        # 5. 应用设定（从合并输出中解析）
         if settings_json:
             self._apply_settings(settings_json, chapter)
         else:
-            print(f"  [设定] 未解析到设定 JSON，跳过（下一次 write 会补录）")
+            print(f"  [设定] 未解析到设定 JSON，跳过")
 
-        # 更新伏笔总览
+        # 6. 更新伏笔总览
         try:
             self.foreshadow.export_to_markdown()
         except Exception:
