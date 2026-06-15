@@ -170,7 +170,10 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
 
         if title != project_name:
             print(f"\n💡 LLM 建议标题：「{title}」，当前项目名：「{project_name}」")
-            rename = input("   要把项目名改为 LLM 建议的标题吗？(y/N)：").strip().lower()
+            try:
+                rename = input("   要把项目名改为 LLM 建议的标题吗？(y/N)：").strip().lower()
+            except EOFError:
+                rename = "n"
             if rename == "y":
                 old_dir = config.PROJECTS_ROOT / project_name
                 new_dir = config.PROJECTS_ROOT / title
@@ -182,11 +185,18 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
                     project_name = title
                     print(f"   ✅ 已重命名为「{title}」")
 
+        # 统计章节数（兼容 volumes 格式）
+        chapter_count = len(outline.get('chapter_plan', []))
+        if chapter_count == 0 and 'volumes' in outline:
+            chapter_count = sum(len(v.get('chapter_plan', [])) for v in outline['volumes'])
+        vol_count = len(outline.get('volumes', []))
+        vol_info = f"（{vol_count}卷）" if vol_count else ""
+
         print(f"\n✅ 大纲生成完成！")
         print(f"   标题：{outline.get('title', '未知')}")
         print(f"   人物：{len(outline.get('characters', []))} 个")
         print(f"   地点：{len(outline.get('locations', []))} 个")
-        print(f"   规划章节：{len(outline.get('chapter_plan', []))} 章")
+        print(f"   规划章节：{chapter_count} 章{vol_info}")
     except Exception as e:
         print(f"❌ 大纲生成失败：{e}")
 

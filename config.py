@@ -46,7 +46,7 @@ def get_project_name():
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek")
 
 # DeepSeek 配置
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-5c24ed4010bd49d3ac3752eafa1f883f")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"  # 或 "deepseek-reasoner"
 

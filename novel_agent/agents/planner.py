@@ -198,6 +198,40 @@ class PlannerAgent:
                     self.foreshadow.plant(chapter=chapter, content=fs_content, type="mystery",
                                           related_characters=characters, importance=3)
 
+        # 如果预埋伏笔超过30条，只保留每卷前5条（控制预埋量）
+        total_fs = len(self.foreshadow.foreshadows)
+        if total_fs > 30:
+            # 按章节分组，每卷只保留前5条
+            by_chapter = {}
+            for fs in self.foreshadow.foreshadows:
+                ch = fs.chapter_planted
+                if ch not in by_chapter:
+                    by_chapter[ch] = []
+                by_chapter[ch].append(fs)
+            # 按卷分组（假设每卷10-15章），取每卷前5条伏笔
+            kept = []
+            all_chs = sorted(by_chapter.keys())
+            vol_start = 0
+            for vol_idx in range(0, len(all_chs), 15):
+                vol_chs = all_chs[vol_idx:vol_idx + 15]
+                kept.extend(by_chapter[ch][0] for ch in vol_chs if by_chapter[ch])
+                # 如果本卷超过5条，只保留前5条
+                vol_fs = [fs for ch in vol_chs for fs in by_chapter[ch]]
+                if len(vol_fs) > 5:
+                    kept_for_vol = vol_fs[:5]
+                else:
+                    kept_for_vol = vol_fs
+                kept.extend(kept_for_vol)
+            # 去重
+            seen = set()
+            final = []
+            for fs in kept:
+                if fs.id not in seen:
+                    seen.add(fs.id)
+                    final.append(fs)
+            self.foreshadow.foreshadows = final
+            print(f"  📌 预埋伏笔从 {total_fs} 条精简至 {len(final)} 条（每卷保留≤5条）")
+
     @staticmethod
     def _extract_json(text: str) -> Dict:
         """从 LLM 输出中提取 JSON，多层 fallback + 截断检测 + 修复尝试"""
