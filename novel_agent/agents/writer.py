@@ -12,7 +12,7 @@ import logging
 import re
 import config
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
 from novel_agent.llm.client import generate
 from novel_agent.core.models import (
@@ -229,12 +229,11 @@ class WriterAgent:
         self.continuity.save_all()
         self.foreshadow._save()
 
-        # 应用设定（从合并输出中解析，或跳过）
+        # 应用设定（从合并输出中解析）
         if settings_json:
             self._apply_settings(settings_json, chapter)
         else:
-            # Fallback：如果合并解析失败，尝试单独提取
-            self._extract_and_save_world_settings(content, chapter)
+            print(f"  [设定] 未解析到设定 JSON，跳过（下一次 write 会补录）")
 
         # 更新伏笔总览
         try:
