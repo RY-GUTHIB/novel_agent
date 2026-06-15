@@ -13,7 +13,7 @@ from typing import Dict, List
 from .models import (
     CharacterProfile, LocationProfile, WorldSetting,
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
-    ItemProfile,
+    ItemProfile, StyleProfile,
 )
 
 
@@ -30,6 +30,7 @@ class MemoryManager:
         self.sect_factions: Dict[str, SectFaction] = {}
         self.scene_events: List[SceneEvent] = []
         self.items: Dict[str, ItemProfile] = {}
+        self.style: StyleProfile = StyleProfile()  # 风格锚点（单例，全书一套）
         self._load_all()
 
     # ========== JSON 工具 ==========
@@ -57,6 +58,7 @@ class MemoryManager:
         self._load_sect_factions()
         self._load_scene_events()
         self._load_items()
+        self._load_style()
 
     def save_all(self):
         self._save_characters()
@@ -547,6 +549,91 @@ class MemoryManager:
             if item.prohibited_actions:
                 lines.append(f"    ⛔ 禁止操作：{', '.join(item.prohibited_actions)}")
         lines.append("⚠️ 以上物品已有归属，后文不得再次出现「他人将同一物品赠予/交给角色」的情节！")
+        return "\n".join(lines)
+
+    # ========== 风格锚点 ==========
+
+    def _load_style(self):
+        """从 style.json 加载风格锚点"""
+        path = self.data_dir / "style.json"
+        if not path.exists():
+            self.style = StyleProfile()
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.style = StyleProfile(
+                chapter_introduced=data.get("chapter_introduced", 1),
+                narrative_voice=data.get("narrative_voice", ""),
+                sentence_rhythm=data.get("sentence_rhythm", ""),
+                paragraph_pattern=data.get("paragraph_pattern", ""),
+                rhetorical_devices=data.get("rhetorical_devices", []),
+                tone_words=data.get("tone_words", []),
+                forbidden_words=data.get("forbidden_words", []),
+                dialect_markers=data.get("dialect_markers", ""),
+                example_snippets=data.get("example_snippets", []),
+                notes=data.get("notes", ""),
+            )
+        except (json.JSONDecodeError, IOError, OSError):
+            self.style = StyleProfile()
+
+    def _save_style(self):
+        """保存风格锚点到 style.json"""
+        path = self.data_dir / "style.json"
+        data = {
+            "chapter_introduced": self.style.chapter_introduced,
+            "narrative_voice": self.style.narrative_voice,
+            "sentence_rhythm": self.style.sentence_rhythm,
+            "paragraph_pattern": self.style.paragraph_pattern,
+            "rhetorical_devices": self.style.rhetorical_devices,
+            "tone_words": self.style.tone_words,
+            "forbidden_words": self.style.forbidden_words,
+            "dialect_markers": self.style.dialect_markers,
+            "example_snippets": self.style.example_snippets,
+            "notes": self.style.notes,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def update_style(self, updates: dict):
+        """从 SETTINGS_JSON 的 style 字段更新风格锚点"""
+        changed = False
+        for k, v in updates.items():
+            if v and hasattr(self.style, k):
+                old = getattr(self.style, k, "")
+                if v != old and v not in str(old):
+                    setattr(self.style, k, v)
+                    changed = True
+        if changed:
+            self._save_style()
+
+    def get_style_prompt(self) -> str:
+        """生成风格约束文本（注入到 Writer 和 Reviewer 的 prompt 中）"""
+        s = self.style
+        if not any([s.narrative_voice, s.sentence_rhythm, s.paragraph_pattern,
+                     s.rhetorical_devices, s.tone_words, s.forbidden_words]):
+            return "（未建立风格锚点，无需额外风格约束）"
+        lines = ["【全文风格锚点（⚠️ 必须遵守，防止文风前后不一致）】"]
+        if s.narrative_voice:
+            lines.append(f"  - 叙述视角：{s.narrative_voice}")
+        if s.sentence_rhythm:
+            lines.append(f"  - 句节奏：{s.sentence_rhythm}")
+        if s.paragraph_pattern:
+            lines.append(f"  - 段落结构：{s.paragraph_pattern}")
+        if s.rhetorical_devices:
+            lines.append(f"  - 常用修辞：{'、'.join(s.rhetorical_devices)}")
+        if s.tone_words:
+            lines.append(f"  - 语气词偏好：{'、'.join(s.tone_words)}")
+        if s.forbidden_words:
+            lines.append(f"  - 禁用词：{'、'.join(s.forbidden_words)}")
+        if s.dialect_markers:
+            lines.append(f"  - 方言特征：{s.dialect_markers}")
+        if s.example_snippets:
+            lines.append(f"  - 风格范例（{len(s.example_snippets)} 段）：")
+            for snippet in s.example_snippets[:2]:
+                lines.append(f"    「{snippet[:120]}...」")
+        if s.notes:
+            lines.append(f"  - 备注：{s.notes}")
         return "\n".join(lines)
 
     # ========== 导出（给可视化用）==========

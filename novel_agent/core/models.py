@@ -182,3 +182,20 @@ class Foreshadow:
     resolution: str = ""
     importance: int = 1
     status: str = "planted"
+
+
+# ============ 风格相关 ============
+
+@dataclass
+class StyleProfile:
+    """风格锚点（贯穿全文的风格约束，防止前后文风不一致）"""
+    chapter_introduced: int = 1      # 首次明确风格的章节
+    narrative_voice: str = ""        # 叙述视角（第一人称/第三人称有限/第三人称全知）
+    sentence_rhythm: str = ""      # 句节奏偏好（如"短句为主，爆发段用3-5字短句"）
+    paragraph_pattern: str = ""    # 段落结构（如"每段2-4句，不超8行"）
+    rhetorical_devices: List[str] = field(default_factory=list)  # 常用修辞手法（如["排比","反问","对仗"]）
+    tone_words: List[str] = field(default_factory=list)       # 语气词偏好（如["——","…","！"]）
+    forbidden_words: List[str] = field(default_factory=list)    # 禁用词（如["嗯","哦","啊哈"]）
+    dialect_markers: str = ""       # 方言特征（如无/轻微/浓厚）
+    example_snippets: List[str] = field(default_factory=list)  # 风格范例片段（2-3段原文）
+    notes: str = ""

@@ -18,6 +18,8 @@ from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
 from novel_agent.core.models import ItemProfile
+from novel_agent.core.spacetime_guard import SpacetimeGuard
+from novel_agent.core.logic_guard import LogicGuard
 from novel_agent.agents.planner import PlannerAgent
 from novel_agent.agents.writer import WriterAgent
 from novel_agent.agents.reviewer import ReviewerAgent
@@ -288,14 +290,37 @@ def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
     writer = WriterAgent(memory, continuity, foreshadow, genre=outline.get("genre", "玄幻"), style=outline.get("style", "热血"))
     reviewer = ReviewerAgent(memory, continuity, foreshadow)
 
+    # ===== 生成前预检 =====
+    # P0: 时空守卫 —— 检查时间线自洽 + 空间可达性
+    spacetime_guard = SpacetimeGuard(memory, continuity)
+    spacetime_errors = spacetime_guard.pre_check(
+        chapter=chapter, time_tag=time_tag, location=location,
+        characters=characters,
+    )
+    if spacetime_errors:
+        print("\n⛔ 时空守卫拒绝生成！请修复以下问题后重试：")
+        for err in spacetime_errors:
+            print(f"  ❌ {err}")
+        return
+
+    # P1: 逻辑约束引擎 —— 生成写作前约束文本
+    logic_guard = LogicGuard(memory, continuity)
+    logic_constraints = logic_guard.build_constraints(
+        chapter=chapter, characters=characters, location=location,
+    )
+    if logic_constraints:
+        print(f"\n🔒 已注入 {len(logic_constraints.split(chr(10)))} 条逻辑约束")
+
     try:
         content, settings_json = writer.write_chapter(chapter=chapter, title=title, summary=summary,
-                                        time_tag=time_tag, location=location, characters=characters)
+                                        time_tag=time_tag, location=location, characters=characters,
+                                        logic_constraints=logic_constraints)
         writer.save_chapter(chapter, title, content)
 
         # 审校循环
         content, settings_json = _review_loop(writer, reviewer, chapter, title, content, summary,
-                                               time_tag, location, characters, settings_json)
+                                               time_tag, location, characters, settings_json,
+                                               logic_constraints=logic_constraints)
 
         update_project_progress(project_name, chapters_written=chapter)
         rebuild_novel_md(config.OUTPUT_DIR)
@@ -333,12 +358,13 @@ def _get_chapter_plan(outline: dict) -> list:
     return chapter_plan
 
 
-def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, location, characters, settings_json=None):
+def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, location, characters, settings_json=None, logic_constraints=""):
     max_revisions = 3
     prev_score = None
     no_improvement_count = 0
     for rev in range(max_revisions + 1):
-        report = reviewer.review_chapter(chapter, title, content)
+        report = reviewer.review_chapter(chapter, title, content,
+                                          logic_constraints=logic_constraints)
         print(f"\n📋 审校报告（第{rev+1}次）：")
         print(report["raw_text"][:2000])
         print(f"\n结论：{report['verdict']} | 总分：{report['overall_score']}")
@@ -366,6 +392,7 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
             chapter=chapter, title=title, original_content=content,
             review_report=report["raw_text"], summary=summary,
             time_tag=time_tag, location=location, characters=characters,
+            logic_constraints=logic_constraints,
         )
         writer.save_chapter(chapter, title, content)
         print("  修订完成，重新审校...")

@@ -34,7 +34,8 @@ class ReviewerAgent:
         self.foreshadow = foreshadow_tracker
 
     def review_chapter(self, chapter: int, title: str, content: str,
-                        temperature: float = 0.3) -> Dict:
+                        temperature: float = 0.3,
+                        logic_constraints: str = "") -> Dict:
         # 构建空间位置上下文
         spatial_lines = []
         all_chars = set(cl.character for cl in self.continuity.character_locations)
@@ -62,6 +63,8 @@ class ReviewerAgent:
             relationship_details=self.memory.get_all_relationships_prompt(),
             scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
             foreshadow_summary=self.foreshadow.summarize(),
+            style_prompt=self.memory.get_style_prompt(),
+            logic_constraints=logic_constraints or "（无特殊逻辑约束）",
         )
 
         response = generate(
@@ -90,6 +93,7 @@ class ReviewerAgent:
                     "acquaintance": "角色相识一致性", "personality": "性格一致性",
                     "emotion": "情绪价值", "comparison": "实力对比逻辑", "recall": "前文回忆真实性",
                     "time": "时间一致性",
+                    "style_consistency": "风格一致性",
                 }
                 for key, cn_name in field_map.items():
                     if key in parsed:

@@ -51,7 +51,8 @@ class WriterAgent:
 
     def write_chapter(self, chapter: int, title: str, summary: str,
                        time_tag: str, location: str, characters: List[str],
-                       temperature: float = config.TEMPERATURE) -> tuple:
+                       temperature: float = config.TEMPERATURE,
+                       logic_constraints: str = "") -> tuple:
         """返回 (content, settings_json) 以便审校通过后调用 finalize_chapter 回写设定"""
         # 1. 冲突检测 + 预检
         char_loc_map = {char: location for char in characters}
@@ -68,6 +69,7 @@ class WriterAgent:
         )
         user_prompt = self._build_writer_user_prompt(
             chapter, title, summary, time_tag, location, characters, generation_contract,
+            logic_constraints=logic_constraints,
         )
 
         # 3. 调用 LLM（一次调用同时生成正文 + 设定 JSON）
@@ -86,13 +88,15 @@ class WriterAgent:
     def revise_chapter(self, chapter: int, title: str, original_content: str,
                         review_report: str, summary: str, time_tag: str,
                         location: str, characters: List[str],
-                        temperature: float = 0.3) -> tuple:
+                        temperature: float = 0.3,
+                        logic_constraints: str = "") -> tuple:
         """返回 (content, settings_json) 以便审校通过后调用 finalize_chapter 回写设定"""
         generation_contract = self.memory.get_generation_contract(chapter, characters)
         system_prompt = CHAPTER_REVISER_SYSTEM_PROMPT.format(word_target=config.CHAPTER_WORD_TARGET)
         user_prompt = self._build_reviser_user_prompt(
             chapter, title, review_report, original_content, summary,
             time_tag, location, characters, generation_contract,
+            logic_constraints=logic_constraints,
         )
 
         raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
@@ -107,7 +111,8 @@ class WriterAgent:
     # ========== Prompt 构建 ==========
 
     def _build_writer_user_prompt(self, chapter, title, summary, time_tag,
-                                    location, characters, generation_contract) -> str:
+                                    location, characters, generation_contract,
+                                    logic_constraints: str = "") -> str:
         character_prompts = "\n\n".join(
             self.memory.get_character_prompt(c) for c in characters if c in self.memory.characters
         )
@@ -119,7 +124,7 @@ class WriterAgent:
         rag_context = self._get_rag_context(chapter, title, summary, characters)
         item_status_table = self.memory.get_item_status_table()
 
-        # 设定提取上下文（合并到写作 prompt 中，省掉单独的 LLM 调用）
+        # 设定提取上下文
         char_summary_text = self._build_char_summary(characters)
         existing_ws_text = ", ".join(sorted(self.memory.world_settings.keys())) if self.memory.world_settings else "（无）"
         existing_loc_text = ", ".join(sorted(self.memory.locations.keys())) if self.memory.locations else "（无）"
@@ -128,12 +133,19 @@ class WriterAgent:
 
         # 上一章结尾钩子
         prev_chapter_ending = self._get_prev_chapter_ending(chapter)
+        # 风格锚点
+        style_prompt = self.memory.get_style_prompt()
+        # 逻辑约束（来自 LogicGuard，纯规则）
+        if not logic_constraints:
+            logic_constraints = "（无特殊逻辑约束）"
         
         return CHAPTER_WRITER_USER_PROMPT.format(
             chapter=chapter, title=title, summary=summary,
             time_tag=time_tag, location=location, characters="、".join(characters),
             generation_contract=generation_contract,
             prev_chapter_ending=prev_chapter_ending,
+            style_prompt=style_prompt,
+            logic_constraints=logic_constraints,
             continuity_prompt=continuity_prompt,
             character_prompts=character_prompts or "（无）",
             world_settings=self.memory.get_world_settings_prompt(),
@@ -264,7 +276,7 @@ class WriterAgent:
 
     def _build_reviser_user_prompt(self, chapter, title, review_report, original_content,
                                      summary, time_tag, location, characters,
-                                     generation_contract) -> str:
+                                     generation_contract, logic_constraints: str = "") -> str:
         character_prompts = "\n\n".join(
             self.memory.get_character_prompt(c) for c in characters if c in self.memory.characters
         )
@@ -274,6 +286,9 @@ class WriterAgent:
             character_knowledge_text=self.memory.get_character_knowledge_prompt(chapter=chapter),
         )
         prev_chapter_ending = self._get_prev_chapter_ending(chapter)
+        style_prompt = self.memory.get_style_prompt()
+        if not logic_constraints:
+            logic_constraints = "（无特殊逻辑约束）"
 
         return CHAPTER_REVISER_USER_PROMPT.format(
             chapter=chapter, title=title, review_report=review_report,
@@ -281,6 +296,8 @@ class WriterAgent:
             time_tag=time_tag, location=location, characters="、".join(characters),
             generation_contract=generation_contract,
             prev_chapter_ending=prev_chapter_ending,
+            style_prompt=style_prompt,
+            logic_constraints=logic_constraints,
             continuity_prompt=continuity_prompt,
             character_prompts=character_prompts or "（无）",
             world_settings=self.memory.get_world_settings_prompt(),
@@ -442,6 +459,7 @@ class WriterAgent:
             self._apply_sect_factions(parsed.get("sect_factions", []), chapter)
             self._apply_scene_events(parsed.get("scene_events", []), chapter)
             self._apply_items(parsed.get("items", []), chapter)
+            self._apply_style(parsed.get("style", {}))
         except (KeyError, ValueError, TypeError, AttributeError) as e:
             print(f"  [WARN] 设定回写失败: {e}")
 
@@ -772,6 +790,12 @@ class WriterAgent:
             print(f"  [设定提取·物品] {', '.join(parts)}")
 
     # ========== JSON 解析工具 ==========
+
+    def _apply_style(self, style_updates: dict):
+        """应用风格锚点更新（从 SETTINGS_JSON 的 style 字段）"""
+        if not style_updates or not isinstance(style_updates, dict):
+            return
+        self.memory.update_style(style_updates)
 
     def save_chapter(self, chapter: int, title: str, content: str, output_dir: str = None):
         out_dir = Path(output_dir or config.OUTPUT_DIR)
