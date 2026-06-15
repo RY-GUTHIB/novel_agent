@@ -37,6 +37,7 @@ class CharacterProfile:
     relationships: Dict[str, str] = field(default_factory=dict)
     relationships_detail: Dict[str, dict] = field(default_factory=dict)
     cultivation: str = ""
+    current_location: str = ""
     status: str = "alive"
     first_appeared: int = 1
     arc: str = ""

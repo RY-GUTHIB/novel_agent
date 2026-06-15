@@ -174,6 +174,7 @@ class WriterAgent:
             rels_str = ", ".join(f"{k}({v})" for k, v in c.relationships.items())
             lines.append(
                 f"  {name}：{c.gender}，{c.age}，修为={c.cultivation}，"
+                f"位置={c.current_location or '未知'}，"
                 f"能力[{abilities_str}]，关系[{rels_str}]，状态={c.status}"
             )
         return "\n".join(lines) if lines else "（无）"
@@ -454,7 +455,7 @@ class WriterAgent:
                                     existing[k] = v
                         else:
                             char.relationships_detail[other] = ctx
-                for field_name in ["cultivation", "appearance", "personality", "status", "goals", "notes"]:
+                for field_name in ["cultivation", "current_location", "appearance", "personality", "status", "goals", "notes"]:
                     val = updates.get(field_name, "")
                     if val:
                         setattr(char, field_name, val)
