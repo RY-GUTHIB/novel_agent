@@ -177,6 +177,16 @@ class ContinuityGuard:
             for e in recent_events:
                 lines.append(f"  第{e.chapter}章 [{e.time_tag}]：{e.event}（涉及：{', '.join(e.characters)}）")
 
+        # C方案：已完成关键事件列表（防止重复情节）
+        all_events = [e for e in self.timeline if e.chapter < chapter]
+        if all_events:
+            # 按重要性取 top 20 条
+            key_events = sorted(all_events, key=lambda x: -x.importance)[:20]
+            lines.append("\n## ⚠️ 已发生的关键事件（禁止重复！）：")
+            for e in key_events:
+                lines.append(f"  第{e.chapter}章：{e.event}")
+            lines.append("  以上事件已经发生过，本章不要重复！")
+
         all_chars = set()
         for e in recent_events:
             all_chars.update(e.characters)

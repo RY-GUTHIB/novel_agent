@@ -289,10 +289,38 @@ class WriterAgent:
         if not self.rag:
             return "（无相关前文片段）"
         try:
+            # B方案：多维度检索，确保覆盖物品传递、关键对话等细节
+            all_results = []
+
+            # 维度1：章节大纲+人物（原有）
             rag_query = f"{title} {summary} {' '.join(characters)}"
-            rag_results = self.rag.search(rag_query, filter_chapter_lt=chapter)
-            if rag_results:
-                return "\n\n---\n\n".join(r["document"] for r in rag_results)
+            results = self.rag.search(rag_query, filter_chapter_lt=chapter, top_k=3)
+            all_results.extend(results)
+
+            # 维度2：各角色近期言行（防止物品重复交付、对话重复等）
+            for char in characters[:3]:  # 只检索前3个主要角色
+                char_results = self.rag.search(
+                    f"{char} 给了 递给 交给 获得 拿到 得到 发生 说了",
+                    filter_chapter_lt=chapter, top_k=2
+                )
+                all_results.extend(char_results)
+
+            # 去重 + 按章节排序
+            seen = set()
+            unique_results = []
+            for r in sorted(all_results, key=lambda x: x.get("metadata", {}).get("chapter", 0)):
+                doc_key = r["document"][:60]
+                if doc_key not in seen:
+                    seen.add(doc_key)
+                    unique_results.append(r)
+
+            if unique_results:
+                parts = []
+                for r in unique_results[:8]:  # 最多8条，避免prompt过长
+                    meta = r.get("metadata", {})
+                    ch = meta.get("chapter", "?")
+                    parts.append(f"  [第{ch}章片段] {r['document'][:300]}")
+                return "## 🔍 前文相关片段（RAG检索，请据此避免重复情节）\n" + "\n---\n".join(parts)
         except (IOError, OSError, json.JSONDecodeError, ValueError) as e:
             print(f"  [WARN] RAG 检索失败: {e}")
         return "（无相关前文片段）"
