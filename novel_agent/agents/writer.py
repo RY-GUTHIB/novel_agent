@@ -68,12 +68,16 @@ class WriterAgent:
             chapter, title, summary, time_tag, location, characters, generation_contract,
         )
 
-        # 3. 调用 LLM
-        content = generate(system_prompt=system_prompt, user_prompt=user_prompt,
-                           temperature=temperature, max_tokens=config.MAX_TOKENS)
+        # 3. 调用 LLM（一次调用同时生成正文 + 设定 JSON）
+        raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
+                              temperature=temperature, max_tokens=config.MAX_TOKENS)
 
-        # 4. 后处理
-        self._post_write(chapter, title, content, summary, time_tag, location, characters)
+        # 4. 解析：分离正文和设定 JSON
+        content, settings_json = self._split_output_and_settings(raw_output)
+
+        # 5. 后处理
+        self._post_write(chapter, title, content, summary, time_tag, location, characters,
+                         settings_json=settings_json)
 
         return content
 
@@ -88,11 +92,13 @@ class WriterAgent:
             time_tag, location, characters, generation_contract,
         )
 
-        content = generate(system_prompt=system_prompt, user_prompt=user_prompt,
-                           temperature=temperature, max_tokens=config.MAX_TOKENS)
+        raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
+                              temperature=temperature, max_tokens=config.MAX_TOKENS)
+
+        content, settings_json = self._split_output_and_settings(raw_output)
 
         self._post_write(chapter, title, content, summary, time_tag, location, characters,
-                         skip_scan=True)
+                         skip_scan=True, settings_json=settings_json)
         return content
 
     # ========== Prompt 构建 ==========
@@ -109,6 +115,12 @@ class WriterAgent:
         )
         rag_context = self._get_rag_context(chapter, title, summary, characters)
 
+        # 设定提取上下文（合并到写作 prompt 中，省掉单独的 LLM 调用）
+        char_summary_text = self._build_char_summary(characters)
+        existing_ws_text = ", ".join(sorted(self.memory.world_settings.keys())) if self.memory.world_settings else "（无）"
+        existing_loc_text = ", ".join(sorted(self.memory.locations.keys())) if self.memory.locations else "（无）"
+        existing_sect_text = ", ".join(sorted(self.memory.sect_factions.keys())) if self.memory.sect_factions else "（无）"
+
         return CHAPTER_WRITER_USER_PROMPT.format(
             chapter=chapter, title=title, summary=summary,
             time_tag=time_tag, location=location, characters="、".join(characters),
@@ -123,7 +135,26 @@ class WriterAgent:
             scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
             foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
             rag_context=rag_context,
+            char_summary_text=char_summary_text,
+            existing_ws_text=existing_ws_text,
+            existing_loc_text=existing_loc_text,
+            existing_sect_text=existing_sect_text,
         )
+
+    def _build_char_summary(self, characters: list) -> str:
+        """构建已有人物摘要（用于设定提取上下文）"""
+        lines = []
+        for name in characters:
+            if name not in self.memory.characters:
+                continue
+            c = self.memory.characters[name]
+            abilities_str = ", ".join(c.abilities)
+            rels_str = ", ".join(f"{k}({v})" for k, v in c.relationships.items())
+            lines.append(
+                f"  {name}：{c.gender}，{c.age}，修为={c.cultivation}，"
+                f"能力[{abilities_str}]，关系[{rels_str}]，状态={c.status}"
+            )
+        return "\n".join(lines) if lines else "（无）"
 
     def _build_reviser_user_prompt(self, chapter, title, review_report, original_content,
                                      summary, time_tag, location, characters,
@@ -168,7 +199,7 @@ class WriterAgent:
     # ========== 写后处理 ==========
 
     def _post_write(self, chapter, title, content, summary, time_tag,
-                     location, characters, skip_scan=False):
+                     location, characters, skip_scan=False, settings_json=None):
         # 提取伏笔
         new_fs = self._extract_foreshadows(content, chapter, skip_scan=skip_scan)
         for fs_content in new_fs:
@@ -198,14 +229,59 @@ class WriterAgent:
         self.continuity.save_all()
         self.foreshadow._save()
 
-        # 提取设定
-        self._extract_and_save_world_settings(content, chapter)
+        # 应用设定（从合并输出中解析，或跳过）
+        if settings_json:
+            self._apply_settings(settings_json, chapter)
+        else:
+            # Fallback：如果合并解析失败，尝试单独提取
+            self._extract_and_save_world_settings(content, chapter)
 
         # 更新伏笔总览
         try:
             self.foreshadow.export_to_markdown()
         except Exception:
             pass
+
+    # ========== 输出解析 ==========
+
+    @staticmethod
+    def _split_output_and_settings(raw_output: str) -> tuple:
+        """从 LLM 输出中分离正文和设定 JSON"""
+        separator = "===SETTINGS_JSON==="
+        if separator in raw_output:
+            parts = raw_output.split(separator, 1)
+            content = parts[0].strip()
+            settings_text = parts[1].strip()
+            # 移除可能的 ```json ... ``` 包裹
+            settings_text = re.sub(r'^```json\s*', '', settings_text)
+            settings_text = re.sub(r'\s*```$', '', settings_text)
+            settings_json = WriterAgent._parse_json(settings_text)
+            if settings_json:
+                print(f"  [合并解析] 正文 {len(content)} 字，设定 JSON 解析成功")
+                return content, settings_json
+            else:
+                print(f"  [合并解析] 正文 {len(content)} 字，设定 JSON 解析失败，将 fallback")
+                return content, None
+        else:
+            print(f"  [合并解析] 未找到分隔符，正文 {len(raw_output)} 字")
+            return raw_output, None
+
+    def _apply_settings(self, parsed: dict, chapter: int):
+        """应用从合并输出中解析的设定 JSON（复用原有 9 个方法）"""
+        if not parsed:
+            return
+        try:
+            self._apply_characters(parsed.get("characters", []), chapter)
+            self._apply_world_settings(parsed.get("world_settings", []), chapter)
+            self._apply_locations(parsed.get("locations", []), chapter)
+            self._apply_spatial_movements(parsed.get("spatial_movements", []), chapter)
+            self._apply_spacemap_updates(parsed.get("spacemap_updates", []))
+            self._apply_plot_rules(parsed.get("plot_rules", []), chapter)
+            self._apply_character_knowledge(parsed.get("character_knowledge", []), chapter)
+            self._apply_sect_factions(parsed.get("sect_factions", []), chapter)
+            self._apply_scene_events(parsed.get("scene_events", []), chapter)
+        except Exception as e:
+            print(f"  [WARN] 设定应用失败: {e}")
 
     # ========== 伏笔提取 ==========
 
