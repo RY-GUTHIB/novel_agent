@@ -80,6 +80,55 @@ class ForeshadowTracker:
                 self._save()
                 return
 
+    def auto_resolve(self, content: str, chapter: int) -> int:
+        """自动检测正文中是否兑现了待回收伏笔（不调 LLM）
+        
+        检测方式：
+        1. 正文中的 [FS_RESOLVE: FS_xxx] 显式标记
+        2. 待回收伏笔的关键词在正文中出现（宽松匹配）
+        
+        :return: 成功回收的伏笔数量
+        """
+        # 方式1：显式标记 [FS_RESOLVE: FS_xxx]
+        resolve_matches = re.findall(r'\[FS_RESOLVE[：:]\s*(FS_\d+)\s*\]', content)
+        
+        # 方式2：正文中提取关键词，与待回收伏笔匹配
+        pending = self.get_pending(before_chapter=chapter + 1)
+        resolved_ids = set(resolve_matches)
+        
+        for fs in pending:
+            if fs.id in resolved_ids:
+                continue
+            # 从伏笔内容中提取关键词（取3-10个字的连续片段）
+            keywords = re.findall(r'[\u4e00-\u9fa5]{3,10}', fs.content)
+            if not keywords:
+                continue
+            # 如果正文中出现了伏笔内容的核心关键词，认为已兑现
+            # 匹配阈值：关键词越多越宽松，越少越严格（避免短伏笔误回收）
+            kw_count = len(keywords)
+            if kw_count <= 3:
+                required = kw_count  # 短伏笔：必须全部匹配
+            elif kw_count <= 6:
+                required = max(kw_count - 1, 3)  # 中等：最多缺1个
+            else:
+                required = max(kw_count * 2 // 3, 4)  # 长伏笔：匹配2/3即可
+            match_count = sum(1 for kw in keywords if kw in content)
+            if match_count >= required:
+                resolved_ids.add(fs.id)
+        
+        # 执行回收
+        count = 0
+        for fs_id in resolved_ids:
+            try:
+                self.resolve(fs_id, chapter, f"第{chapter}章自动回收")
+                count += 1
+            except ValueError:
+                pass
+        
+        if count:
+            self._save()
+        return count
+
     def get_pending(self, before_chapter: int = None) -> List[Foreshadow]:
         result = [fs for fs in self.foreshadows if fs.status == "planted"]
         if before_chapter is not None:

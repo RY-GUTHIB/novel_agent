@@ -14,7 +14,7 @@ from typing import Dict
 
 from novel_agent.core.models import CharacterProfile, LocationProfile, WorldSetting
 from novel_agent.core.memory import MemoryManager
-from novel_agent.core.continuity import ContinuityGuard, SpaceNode
+from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
 from novel_agent.llm.client import generate
 from .prompts import PLANNER_SYSTEM_PROMPT, OUTLINE_REFINE_PROMPT
@@ -119,15 +119,12 @@ class PlannerAgent:
 
     def _init_locations(self, outline: Dict):
         for loc_data in outline.get("locations", []):
-            node = SpaceNode(
+            profile = LocationProfile(
                 name=loc_data["name"], description=loc_data.get("description", ""),
                 type=loc_data.get("type", "city"), connected_to=loc_data.get("connected_to", []),
             )
-            self.continuity.add_location(node)
-            self.memory.add_location(LocationProfile(
-                name=loc_data["name"], description=loc_data.get("description", ""),
-                type=loc_data.get("type", "city"), connected_to=loc_data.get("connected_to", []),
-            ))
+            self.continuity.add_location(profile)
+            self.memory.add_location(profile)
 
     def _init_factions(self, outline: Dict):
         ws = outline.get("world_setting", {})

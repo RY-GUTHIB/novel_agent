@@ -41,7 +41,7 @@ if sys.platform == "win32":
 from novel_agent.cli.commands import (
     select_project, create_new_project, interactive_loop,
     cmd_write, cmd_review, cmd_viz, cmd_status,
-    cmd_new, cmd_add_fs, cmd_fs_map, cmd_list,
+    cmd_new, cmd_add_fs, cmd_resolve_fs, cmd_fs_map, cmd_list,
     get_current_project_name, set_current_project,
     init_services, check_api_key,
 )
@@ -108,11 +108,13 @@ def main():
                 print(f"❌ 参数错误：{e}")
         else:
             cmd_add_fs(memory, continuity, foreshadow, project_name)
+    elif command == "resolve-fs":
+        cmd_resolve_fs(memory, continuity, foreshadow, project_name)
     elif command == "fs-map":
         cmd_fs_map(memory, continuity, foreshadow, project_name)
     else:
         print(f"❌ 未知命令：{command}")
-        print("可用命令：new, write, review, viz, status, add-fs, fs-map, list")
+        print("可用命令：new, write, review, viz, status, add-fs, resolve-fs, fs-map, list")
         print("或直接运行 python main.py 进入交互模式")
 
 

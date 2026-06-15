@@ -328,6 +328,8 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
         writer.save_chapter(chapter, title, content)
         print("  修订完成，重新审校...")
 
+    # 审校循环结束后，提取最终版本的伏笔和自动回收
+    writer.finalize_foreshadows(content, chapter, characters)
     return content
 
 
@@ -450,6 +452,55 @@ def cmd_fs_map(memory, continuity, foreshadow, project_name):
         print(f"❌ 生成失败：{e}")
 
 
+def cmd_resolve_fs(memory, continuity, foreshadow, project_name):
+    print("\n=== 手动回收/放弃伏笔 ===")
+    pending = foreshadow.get_pending()
+    if not pending:
+        print("✅ 没有待回收的伏笔")
+        return
+    
+    print(f"\n待回收伏笔（共 {len(pending)} 个）：")
+    print("-" * 60)
+    for fs in sorted(pending, key=lambda x: (-x.importance, x.chapter_planted)):
+        chars = f" | 人物：{', '.join(fs.related_characters)}" if fs.related_characters else ""
+        print(f"  [{fs.id}] 第{fs.chapter_planted}章（重要度{fs.importance}）{chars}")
+        print(f"    内容：{fs.content[:80]}{'...' if len(fs.content) > 80 else ''}")
+    print("-" * 60)
+    
+    fs_id = input("\n伏笔ID（如 FS_001）：").strip().upper()
+    if not fs_id:
+        print("❌ ID 不能为空")
+        return
+    if not fs_id.startswith("FS_"):
+        fs_id = "FS_" + fs_id.lstrip("FS_").lstrip("fs_")
+    
+    target = next((fs for fs in foreshadow.foreshadows if fs.id == fs_id), None)
+    if not target:
+        print(f"❌ 未找到伏笔 {fs_id}")
+        return
+    
+    print(f"\n伏笔内容：{target.content}")
+    action = input("操作：1-回收  2-放弃  其他-取消：").strip()
+    
+    if action == "1":
+        chapter = input("兑现章节号：").strip()
+        resolution = input("兑现方式描述（可选）：").strip()
+        try:
+            foreshadow.resolve(fs_id, int(chapter) if chapter else 0, resolution or "手动回收")
+            print(f"\n✅ 伏笔 {fs_id} 已标记为已兑现")
+        except Exception as e:
+            print(f"❌ 回收失败：{e}")
+    elif action == "2":
+        reason = input("放弃原因（可选）：").strip()
+        try:
+            foreshadow.drop(fs_id, reason or "手动放弃")
+            print(f"\n✅ 伏笔 {fs_id} 已标记为已放弃")
+        except Exception as e:
+            print(f"❌ 操作失败：{e}")
+    else:
+        print("已取消")
+
+
 def cmd_list():
     projects = list_projects()
     if not projects:
@@ -475,7 +526,7 @@ def interactive_loop(project_name):
 
     while True:
         print(f"\n📖 当前项目：《{project_name}》")
-        print("命令：write | review | viz | status | new | add-fs | fs-map | switch | list | quit")
+        print("命令：write | review | viz | status | new | add-fs | resolve-fs | fs-map | switch | list | quit")
         cmd = input(">>> ").strip().lower()
 
         if cmd in ("quit", "exit", "q"):
@@ -493,6 +544,8 @@ def interactive_loop(project_name):
             cmd_new(memory, continuity, foreshadow, project_name)
         elif cmd == "add-fs":
             cmd_add_fs(memory, continuity, foreshadow, project_name)
+        elif cmd == "resolve-fs":
+            cmd_resolve_fs(memory, continuity, foreshadow, project_name)
         elif cmd == "fs-map":
             cmd_fs_map(memory, continuity, foreshadow, project_name)
         elif cmd == "switch":
@@ -506,16 +559,17 @@ def interactive_loop(project_name):
         elif cmd == "help":
             print("""
 命令说明：
-  write    - 生成下一章
-  review   - 审校最新章节
-  viz      - 生成可视化（时间线/人物关系/世界地图）
-  status   - 显示当前进度
-  new      - 重新生成大纲
-  add-fs   - 手动添加伏笔
-  fs-map   - 生成伏笔总览
-  switch   - 切换到其他小说项目
-  list     - 列出所有项目
-  quit     - 退出
+  write      - 生成下一章
+  review     - 审校最新章节
+  viz        - 生成可视化（时间线/人物关系/世界地图）
+  status     - 显示当前进度
+  new        - 重新生成大纲
+  add-fs     - 手动添加伏笔
+  resolve-fs - 手动回收/放弃伏笔
+  fs-map     - 生成伏笔总览
+  switch     - 切换到其他小说项目
+  list       - 列出所有项目
+  quit       - 退出
 """)
         else:
             print("❌ 未知命令，输入 help 查看帮助")

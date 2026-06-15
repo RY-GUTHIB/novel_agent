@@ -13,7 +13,7 @@ import re
 import config
 from pathlib import Path
 from typing import Dict, List
-from .models import TimelineEvent, CharacterLocation, SpaceNode
+from .models import TimelineEvent, CharacterLocation, LocationProfile
 
 
 class ContinuityGuard:
@@ -22,7 +22,7 @@ class ContinuityGuard:
     def __init__(self, data_dir: str = None):
         self.data_dir = Path(data_dir or config.DATA_DIR)
         self.timeline: List[TimelineEvent] = []
-        self.spacemap: Dict[str, SpaceNode] = {}
+        self.spacemap: Dict[str, LocationProfile] = {}
         self.character_locations: List[CharacterLocation] = []
         self._load_all()
 
@@ -97,9 +97,9 @@ class ContinuityGuard:
         data = self._load_json("spacemap.json")
         if isinstance(data, list):
             data = {d["name"]: d for d in data}
-        self.spacemap = {k: SpaceNode(**v) for k, v in data.items()}
+        self.spacemap = {k: LocationProfile(**v) for k, v in data.items()}
 
-    def add_location(self, node: SpaceNode):
+    def add_location(self, node: LocationProfile):
         self.spacemap[node.name] = node
         self._save_spacemap()
 

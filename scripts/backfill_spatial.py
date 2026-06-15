@@ -3,7 +3,8 @@ backfill_spatial.py - 从已写章节中补录空间移动数据到 character_lo
 """
 import json
 import config
-from novel_agent.core.continuity import ContinuityGuard, SpaceNode
+from novel_agent.core.continuity import ContinuityGuard
+from novel_agent.core.models import LocationProfile
 from novel_agent.llm.client import generate
 
 config.set_project("苍穹独狼")
@@ -132,7 +133,7 @@ for ch_num, content in chapters:
                 if travel_time:
                     node.travel_time[to_loc] = travel_time
             else:
-                continuity.add_location(SpaceNode(
+                continuity.add_location(LocationProfile(
                     name=from_loc,
                     connected_to=[to_loc],
                     travel_time={to_loc: travel_time} if travel_time else {},
@@ -146,7 +147,7 @@ for ch_num, content in chapters:
                     if travel_time:
                         node.travel_time[from_loc] = travel_time
                 else:
-                    continuity.add_location(SpaceNode(
+                    continuity.add_location(LocationProfile(
                         name=to_loc,
                         connected_to=[from_loc],
                         travel_time={from_loc: travel_time} if travel_time else {},

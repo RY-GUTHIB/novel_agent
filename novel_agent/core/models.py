@@ -57,19 +57,7 @@ class CharacterKnowledge:
 
 @dataclass
 class LocationProfile:
-    """地点档案"""
-    name: str
-    description: str = ""
-    type: str = "city"
-    connected_to: List[str] = field(default_factory=list)
-    first_appeared: int = 1
-    notable_characters: List[str] = field(default_factory=list)
-    notes: str = ""
-
-
-@dataclass
-class SpaceNode:
-    """地点节点（空间地图）"""
+    """地点档案（合并原 SpaceNode，统一地点数据）"""
     name: str
     description: str = ""
     type: str = "city"
@@ -77,6 +65,7 @@ class SpaceNode:
     travel_time: Dict[str, str] = field(default_factory=dict)
     first_appeared: int = 1
     notable_characters: List[str] = field(default_factory=list)
+    notes: str = ""
 
 
 # ============ 世界观相关 ============

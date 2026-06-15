@@ -17,7 +17,7 @@ from typing import List
 from novel_agent.llm.client import generate
 from novel_agent.core.models import (
     CharacterProfile, LocationProfile, WorldSetting,
-    PlotRule, CharacterKnowledge, SectFaction, SceneEvent, SpaceNode,
+    PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
 )
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
@@ -27,8 +27,6 @@ from novel_agent.core.validator import ContractValidator, format_violations_repo
 from .prompts import (
     CHAPTER_WRITER_SYSTEM_PROMPT, CHAPTER_WRITER_USER_PROMPT,
     CHAPTER_REVISER_SYSTEM_PROMPT, CHAPTER_REVISER_USER_PROMPT,
-    SETTINGS_EXTRACT_PROMPT, SETTINGS_EXTRACT_SYSTEM_PROMPT,
-    FORESHADOW_SCAN_PROMPT, FORESHADOW_SCAN_SYSTEM_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,9 +75,9 @@ class WriterAgent:
         # 4. 解析：分离正文和设定 JSON
         content, settings_json = self._split_output_and_settings(raw_output)
 
-        # 5. 后处理
+        # 5. 后处理（审校前跳过伏笔，避免记录错误伏笔）
         self._post_write(chapter, title, content, summary, time_tag, location, characters,
-                         settings_json=settings_json)
+                         settings_json=settings_json, skip_foreshadow=True)
 
         return content
 
@@ -100,7 +98,7 @@ class WriterAgent:
         content, settings_json = self._split_output_and_settings(raw_output)
 
         self._post_write(chapter, title, content, summary, time_tag, location, characters,
-                         skip_scan=True, settings_json=settings_json)
+                         skip_scan=True, settings_json=settings_json, skip_foreshadow=True)
         return content
 
     # ========== Prompt 构建 ==========
@@ -141,6 +139,9 @@ class WriterAgent:
             existing_ws_text=existing_ws_text,
             existing_loc_text=existing_loc_text,
             existing_sect_text=existing_sect_text,
+            rhythm=self._get_rhythm_for_chapter(chapter),
+            beat_type=self._get_beat_type_for_chapter(chapter),
+            hook_type=self._get_hook_type_for_chapter(chapter),
         )
 
     def _build_char_summary(self, characters: list) -> str:
@@ -157,6 +158,73 @@ class WriterAgent:
                 f"能力[{abilities_str}]，关系[{rels_str}]，状态={c.status}"
             )
         return "\n".join(lines) if lines else "（无）"
+
+    # ========== 章节节奏/爽点/钩子辅助方法 ==========
+
+    # 钩子类型池（随机轮换，避免单调）
+    _HOOK_TYPES = [
+        "悬念式（抛出不可能的悬念，让读者忍不住翻下一章）",
+        "反转式（推翻整章建立的认知，最后一行真相炸裂）",
+        "信息炸弹式（章末扔出一个重磅信息，点燃读者好奇心）",
+        "情绪悬停式（情绪爆发到一半戛然而止，吊住读者）",
+        "动作未完成式（关键时刻打断，下一章继续）",
+        "新设定钩（结尾甩出一个有冲击力的新规则/信息）",
+        "留白反转钩（结尾是表象，下一章开头才是真相）",
+    ]
+
+    _BEAT_TYPES = [
+        "打脸时刻（铺垫反差→反派嘲讽→主角碾压→围观震惊）",
+        "实力碾压（主角展示远超同级的能力，众人震撼）",
+        "身份反转（主角隐藏身份被揭露/更高身份暴露）",
+        "突破时刻（主角修为突破，引发天地异象/众人瞩目）",
+        "金句名场面（一段让人热血沸腾的台词或场景）",
+        "意外反转（预期之外的剧情转折，读者拍大腿）",
+        "收获时刻（主角获得重要物品/功法/机缘）",
+        "感情推进（重要关系突破，表白/和解/决裂）",
+    ]
+
+    _RHYTHM_PATTERNS = [
+        "铺垫(困境) → 转折(反转) → 爆发(碾压/打脸) → 释放(震惊/余韵)",
+        "紧张(冲突升级) → 缓一口气 → 更紧张 → 以为结束了 → 最紧张 → 结束+钩子（过山车模式）",
+        "线索A → 推理1 → 发现不对劲 → 线索B推翻推理1 → 新推理 → 更大秘密浮现（悬疑递进模式）",
+        "低压(日常) → 冲突初现 → 压力增大 → 转折爆发 → 章末钩子（起承转爽模式）",
+    ]
+
+    def _get_rhythm_for_chapter(self, chapter: int) -> str:
+        """根据章节号选择情绪曲线模式"""
+        idx = (chapter - 1) % len(self._RHYTHM_PATTERNS)
+        return self._RHYTHM_PATTERNS[idx]
+
+    def _get_beat_type_for_chapter(self, chapter: int) -> str:
+        """根据章节号选择本章爽点类型"""
+        idx = (chapter - 1) % len(self._BEAT_TYPES)
+        return self._BEAT_TYPES[idx]
+
+    def _get_hook_type_for_chapter(self, chapter: int) -> str:
+        """根据章节号选择章末钩子类型"""
+        idx = (chapter - 1) % len(self._HOOK_TYPES)
+        return self._HOOK_TYPES[idx]
+
+    # ========== 伏笔公开接口（供 CLI 调用）==========
+
+    def finalize_foreshadows(self, content: str, chapter: int, characters: list):
+        """审校通过后，从最终版本正文提取伏笔并自动回收（公开方法）"""
+        new_fs = self._extract_foreshadows(content, chapter)
+        for fs_content in new_fs:
+            self.foreshadow.plant(chapter=chapter, content=fs_content, type="mystery",
+                                  related_characters=characters, importance=2)
+        resolved_count = self.foreshadow.auto_resolve(content, chapter)
+        if resolved_count:
+            print(f"  [伏笔回收] 自动回收 {resolved_count} 个伏笔")
+        if new_fs:
+            print(f"  [伏笔提取] 提取 {len(new_fs)} 个新伏笔")
+            for fs in new_fs:
+                print(f"    - {fs[:50]}...")
+        self.foreshadow._save()
+        try:
+            self.foreshadow.export_to_markdown()
+        except Exception:
+            pass
 
     def _build_reviser_user_prompt(self, chapter, title, review_report, original_content,
                                      summary, time_tag, location, characters,
@@ -201,22 +269,31 @@ class WriterAgent:
     # ========== 写后处理 ==========
 
     def _post_write(self, chapter, title, content, summary, time_tag,
-                     location, characters, skip_scan=False, settings_json=None):
+                     location, characters, skip_scan=False, settings_json=None,
+                     skip_foreshadow=False):
+        """写后处理
+        :param skip_foreshadow: True 时跳过伏笔提取/回收（审校前暂不记录）
+        """
         # 0. 契约校验（生成后立即检查，不调 LLM）
         violations = self.validator.validate(content, chapter, characters, self.memory)
         if violations:
             report = format_violations_report(violations)
             print(f"\n{report}")
-            # 高严重性问题数
             high_count = sum(1 for v in violations if v.severity == "高")
             if high_count > 0:
                 print(f"  ⚠️ 发现 {high_count} 个高严重性契约违反，建议审校时重点关注")
 
-        # 1. 提取伏笔
-        new_fs = self._extract_foreshadows(content, chapter, skip_scan=skip_scan)
-        for fs_content in new_fs:
-            self.foreshadow.plant(chapter=chapter, content=fs_content, type="mystery",
-                                  related_characters=characters, importance=2)
+        # 1. 伏笔提取/回收（仅在审校通过后执行）
+        if not skip_foreshadow:
+            new_fs = self._extract_foreshadows(content, chapter)
+            for fs_content in new_fs:
+                self.foreshadow.plant(chapter=chapter, content=fs_content, type="mystery",
+                                      related_characters=characters, importance=2)
+            resolved_count = self.foreshadow.auto_resolve(content, chapter)
+            if resolved_count:
+                print(f"  [伏笔回收] 自动回收 {resolved_count} 个伏笔")
+            if new_fs:
+                print(f"  [伏笔提取] 提取 {len(new_fs)} 个新伏笔")
 
         # 2. 更新连续性
         self.continuity.add_event(chapter=chapter, time_tag=time_tag, event=summary,
@@ -296,92 +373,16 @@ class WriterAgent:
 
     # ========== 伏笔提取 ==========
 
-    def _extract_foreshadows(self, content: str, chapter: int, skip_scan: bool = False) -> List[str]:
+    def _extract_foreshadows(self, content: str, chapter: int) -> List[str]:
+        """从正文中正则提取伏笔（不调 LLM）"""
         results = []
         results.extend(re.findall(r'\[FS:\s*(.*?)\s*\]', content))
         results.extend(re.findall(r'FS：\s*(.*?)(?:\r?\n|$)', content))
         results.extend(re.findall(r'\[FS：\s*(.*?)\s*\]', content))
-
-        if skip_scan:
-            return list(set(results))
-
-        try:
-            scan_result = generate(
-                system_prompt=FORESHADOW_SCAN_SYSTEM_PROMPT,
-                user_prompt=FORESHADOW_SCAN_PROMPT.format(content=content[-2000:]),
-                temperature=0.3, max_tokens=512,
-            )
-            fs_list = self._parse_json_array(scan_result)
-            for fs in fs_list:
-                if isinstance(fs, dict) and "content" in fs:
-                    results.append(fs["content"])
-        except Exception as e:
-            print(f"  [WARN] LLM 伏笔扫描失败: {e}")
-
         return list(set(results))
 
-    # ========== 设定提取（拆分为独立方法）==========
-
-    def _extract_and_save_world_settings(self, content: str, chapter: int):
-        try:
-            parsed = self._call_settings_extractor(content, chapter)
-            if not parsed:
-                print("  [设定提取] 未能解析 LLM 输出，跳过")
-                return
-
-            self._apply_characters(parsed.get("characters", []), chapter)
-            self._apply_world_settings(parsed.get("world_settings", []), chapter)
-            self._apply_locations(parsed.get("locations", []), chapter)
-            self._apply_spatial_movements(parsed.get("spatial_movements", []), chapter)
-            self._apply_spacemap_updates(parsed.get("spacemap_updates", []))
-            self._apply_plot_rules(parsed.get("plot_rules", []), chapter)
-            self._apply_character_knowledge(parsed.get("character_knowledge", []), chapter)
-            self._apply_sect_factions(parsed.get("sect_factions", []), chapter)
-            self._apply_scene_events(parsed.get("scene_events", []), chapter)
-        except Exception as e:
-            print(f"  [WARN] 设定提取失败: {e}")
-
-    def _call_settings_extractor(self, content: str, chapter: int):
-        """调用 LLM 提取设定"""
-        existing_ws_keys = set(self.memory.world_settings.keys())
-        existing_loc_names = set(self.memory.locations.keys())
-        existing_sect_names = set(self.memory.sect_factions.keys())
-
-        char_summaries = []
-        for name, c in self.memory.characters.items():
-            abilities_str = ", ".join(c.abilities)
-            rels_str = ", ".join(f"{k}({v})" for k, v in c.relationships.items())
-            char_summaries.append(
-                f"  {name}：{c.gender}，{c.age}，修为={c.cultivation}，"
-                f"能力[{abilities_str}]，关系[{rels_str}]，状态={c.status}"
-            )
-
-        json_format_example = json.dumps({
-            "characters": [{"name": "人物名", "is_new": True, "updates": {}}],
-            "world_settings": [{"key": "设定名", "value": "设定描述"}],
-            "sect_factions": [{"name": "势力名", "is_new": True, "updates": {}}],
-            "locations": [{"name": "地点名", "is_new": False, "updates": {}}],
-            "scene_events": [{"location": "地点", "scene": "场景", "event": "事件", "characters": [], "importance": 3}],
-            "spatial_movements": [{"character": "人物", "from_location": "A", "to_location": "B", "scene": "", "travel_method": "", "travel_time": "", "note": ""}],
-            "spacemap_updates": [{"from_location": "A", "to_location": "B", "travel_time": "", "is_bidirectional": True}],
-            "plot_rules": [{"condition": "条件", "consequence": "结果", "rule_text": "原文", "source_character": ""}],
-            "character_knowledge": [{"character": "角色", "knowledge": "知道了什么", "source": "怎么知道", "detail": ""}],
-        }, ensure_ascii=False, indent=2)
-
-        prompt = SETTINGS_EXTRACT_PROMPT.format(
-            char_summary_text="\n".join(char_summaries) if char_summaries else "（无）",
-            existing_ws_text=", ".join(sorted(existing_ws_keys)) if existing_ws_keys else "（无）",
-            existing_loc_text=", ".join(sorted(existing_loc_names)) if existing_loc_names else "（无）",
-            existing_sect_text=", ".join(sorted(existing_sect_names)) if existing_sect_names else "（无）",
-            json_format_example=json_format_example,
-            content=content,
-        )
-
-        result = generate(
-            system_prompt=SETTINGS_EXTRACT_SYSTEM_PROMPT,
-            user_prompt=prompt, temperature=0.2, max_tokens=2048,
-        )
-        return self._parse_json(result)
+    # ========== 设定提取（已合并到写作 prompt 的 ===SETTINGS_JSON=== 输出，以下方法已废弃）==========
+    # _extract_and_save_world_settings 和 _call_settings_extractor 已移除，使用 _apply_settings 代替
 
     def _apply_characters(self, items: list, chapter: int):
         new_count = updated_count = 0
@@ -547,7 +548,7 @@ class WriterAgent:
             if travel_time:
                 node.travel_time[to_loc] = travel_time
         else:
-            self.continuity.add_location(SpaceNode(
+            self.continuity.add_location(LocationProfile(
                 name=from_loc, connected_to=[to_loc],
                 travel_time={to_loc: travel_time} if travel_time else {},
             ))
