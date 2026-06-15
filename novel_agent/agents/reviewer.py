@@ -119,9 +119,10 @@ class ReviewerAgent:
                 if "⚠️" in line or "警告" in line or "问题" in line:
                     issues.append({"severity": "中", "description": line.strip()})
 
-        # 结论
-        if verdict == "需修改":
-            if "通过" in text and "不通过" not in text:
+        # 结论：优先以 JSON 中的 verdict 为准，不要被正文中的"通过"误导
+        if not verdict or verdict == "需修改":
+            # 如果没有 JSON verdict，回退到正文判断
+            if "通过" in text and "不通过" not in text and "需修改" not in text:
                 verdict = "通过"
             elif "重写" in text or "需重写" in text:
                 verdict = "需重写"

@@ -74,11 +74,12 @@ class LogicGuard:
         lines = ["【认知边界（⚠️ 严格按此写角色反应，不可跨越信息差）】"]
         has_content = False
 
-        for ck in knowledge:
-            if ck.character in characters and ck.chapter_learned <= chapter:
-                lines.append(f"  - {ck.character} 已知：{ck.knowledge}"
-                             f"（来源：{ck.source}，第{ck.chapter_learned}章获知）")
-                has_content = True
+        for char_name, knowledge_list in knowledge.items():
+            for ck in knowledge_list:
+                if ck.character in characters and ck.chapter_learned <= chapter:
+                    lines.append(f"  - {ck.character} 已知：{ck.knowledge}"
+                                 f"（来源：{ck.source}，第{ck.chapter_learned}章获知）")
+                    has_content = True
 
         if not has_content:
             return ""
