@@ -18,6 +18,7 @@ from novel_agent.llm.client import generate, parse_json, parse_json_array
 from novel_agent.core.models import (
     CharacterProfile, LocationProfile, WorldSetting,
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
+    ItemProfile,
 )
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
@@ -114,12 +115,14 @@ class WriterAgent:
             character_knowledge_text=self.memory.get_character_knowledge_prompt(chapter=chapter),
         )
         rag_context = self._get_rag_context(chapter, title, summary, characters)
+        item_status_table = self.memory.get_item_status_table()
 
         # 设定提取上下文（合并到写作 prompt 中，省掉单独的 LLM 调用）
         char_summary_text = self._build_char_summary(characters)
         existing_ws_text = ", ".join(sorted(self.memory.world_settings.keys())) if self.memory.world_settings else "（无）"
         existing_loc_text = ", ".join(sorted(self.memory.locations.keys())) if self.memory.locations else "（无）"
         existing_sect_text = ", ".join(sorted(self.memory.sect_factions.keys())) if self.memory.sect_factions else "（无）"
+        existing_items_text = ", ".join(sorted(self.memory.items.keys())) if self.memory.items else "（无）"
 
         # 上一章结尾钩子
         prev_chapter_ending = self._get_prev_chapter_ending(chapter)
@@ -139,10 +142,12 @@ class WriterAgent:
             scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
             foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
             rag_context=rag_context,
+            item_status_table=item_status_table,
             char_summary_text=char_summary_text,
             existing_ws_text=existing_ws_text,
             existing_loc_text=existing_loc_text,
             existing_sect_text=existing_sect_text,
+            existing_items_text=existing_items_text,
             rhythm=self._get_rhythm_for_chapter(chapter),
             beat_type=self._get_beat_type_for_chapter(chapter),
             hook_type=self._get_hook_type_for_chapter(chapter),
@@ -283,6 +288,7 @@ class WriterAgent:
             relationship_details=self.memory.get_all_relationships_prompt(),
             scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
             foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
+            item_status_table=self.memory.get_item_status_table(),
         )
 
     def _get_rag_context(self, chapter, title, summary, characters) -> str:
@@ -427,6 +433,7 @@ class WriterAgent:
             self._apply_character_knowledge(parsed.get("character_knowledge", []), chapter)
             self._apply_sect_factions(parsed.get("sect_factions", []), chapter)
             self._apply_scene_events(parsed.get("scene_events", []), chapter)
+            self._apply_items(parsed.get("items", []), chapter)
         except (KeyError, ValueError, TypeError, AttributeError) as e:
             print(f"  [WARN] 设定应用失败: {e}")
 
@@ -704,6 +711,57 @@ class WriterAgent:
             count += 1
         if count:
             print(f"  [设定提取·场景] 新增 {count} 条场景事件")
+
+    def _apply_items(self, items: list, chapter: int):
+        """应用物品更新（方案1+2+5：从 SETTINGS_JSON 解析物品变化）"""
+        new_count = updated_count = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name", "").strip()
+            if not name:
+                continue
+            is_new = item.get("is_new", False)
+            updates = item.get("updates", {})
+
+            if is_new:
+                self.memory.add_item(ItemProfile(
+                    name=name,
+                    type=updates.get("type", ""),
+                    description=updates.get("description", ""),
+                    first_appeared=chapter,
+                    first_giver=updates.get("first_giver", ""),
+                    current_holder=updates.get("current_holder", ""),
+                    prohibited_actions=["give_again_by_other", "duplicate"],
+                    status=updates.get("status", "active"),
+                ))
+                new_count += 1
+            elif name in self.memory.items:
+                existing = self.memory.items[name]
+                old_holder = existing.current_holder
+                new_holder = updates.get("current_holder", "")
+                if new_holder and new_holder != old_holder:
+                    # 物品转移
+                    self.memory.transfer_item(
+                        name, from_holder=old_holder, to_holder=new_holder,
+                        chapter=chapter, reason=updates.get("description", ""),
+                    )
+                else:
+                    # 非转移性更新
+                    for k in ["type", "description", "status", "notes"]:
+                        v = updates.get(k, "")
+                        if v:
+                            setattr(existing, k, v)
+                updated_count += 1
+
+        if new_count or updated_count:
+            self.memory._save_items()
+            parts = []
+            if new_count:
+                parts.append(f"新增 {new_count} 个物品")
+            if updated_count:
+                parts.append(f"更新 {updated_count} 个物品")
+            print(f"  [设定提取·物品] {', '.join(parts)}")
 
     # ========== JSON 解析工具 ==========
 

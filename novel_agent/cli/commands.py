@@ -17,6 +17,7 @@ from novel_agent.project import (
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
+from novel_agent.core.models import ItemProfile
 from novel_agent.agents.planner import PlannerAgent
 from novel_agent.agents.writer import WriterAgent
 from novel_agent.agents.reviewer import ReviewerAgent
@@ -164,6 +165,24 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
     try:
         outline = planner.generate_outline(concept, genre=genre, style=style)
         planner.save_outline_json(outline)
+
+        # 初始化物品状态追踪（方案1+2+5：从大纲中提取 key_items）
+        key_items = outline.get("key_items", [])
+        for item_data in key_items:
+            if isinstance(item_data, dict) and item_data.get("name"):
+                memory.add_item(ItemProfile(
+                    name=item_data["name"],
+                    type=item_data.get("type", ""),
+                    description=item_data.get("description", ""),
+                    first_appeared=item_data.get("first_appeared", 1),
+                    first_giver=item_data.get("first_giver", ""),
+                    current_holder=item_data.get("current_holder", ""),
+                    prohibited_actions=item_data.get("prohibited_actions",
+                        ["give_again_by_other", "duplicate"]),
+                    status=item_data.get("status", "active"),
+                ))
+        if key_items:
+            print(f"  📦 初始化 {len(key_items)} 个关键物品状态追踪")
 
         title = outline.get("title", project_name)
         update_project_progress(project_name, outline=outline, chapters_written=0)

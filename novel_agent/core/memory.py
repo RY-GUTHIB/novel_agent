@@ -13,6 +13,7 @@ from typing import Dict, List
 from .models import (
     CharacterProfile, LocationProfile, WorldSetting,
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
+    ItemProfile,
 )
 
 
@@ -28,6 +29,7 @@ class MemoryManager:
         self.character_knowledge: Dict[str, List[CharacterKnowledge]] = {}
         self.sect_factions: Dict[str, SectFaction] = {}
         self.scene_events: List[SceneEvent] = []
+        self.items: Dict[str, ItemProfile] = {}
         self._load_all()
 
     # ========== JSON 工具 ==========
@@ -54,6 +56,7 @@ class MemoryManager:
         self._load_character_knowledge()
         self._load_sect_factions()
         self._load_scene_events()
+        self._load_items()
 
     def save_all(self):
         self._save_characters()
@@ -464,6 +467,87 @@ class MemoryManager:
             if c.status == "dead":
                 warnings.append(f"⚠️ 预检：{char_name} 已标记为死亡（status=dead），但本章计划出场。如非复活剧情请修正。")
         return warnings
+
+    # ========== 物品状态追踪（方案1+2+5：显式状态管理）==========
+
+    def _load_items(self):
+        data = self._load_json("items.json")
+        for name, item_data in data.items():
+            if isinstance(item_data, dict):
+                self.items[name] = ItemProfile(
+                    name=name,
+                    type=item_data.get("type", ""),
+                    description=item_data.get("description", ""),
+                    first_appeared=item_data.get("first_appeared", 1),
+                    first_giver=item_data.get("first_giver", ""),
+                    current_holder=item_data.get("current_holder", ""),
+                    subsequent_transfers=item_data.get("subsequent_transfers", []),
+                    prohibited_actions=item_data.get("prohibited_actions", []),
+                    status=item_data.get("status", "active"),
+                    notes=item_data.get("notes", ""),
+                )
+
+    def _save_items(self):
+        data = {}
+        for name, item in self.items.items():
+            data[name] = {
+                "type": item.type, "description": item.description,
+                "first_appeared": item.first_appeared, "first_giver": item.first_giver,
+                "current_holder": item.current_holder,
+                "subsequent_transfers": item.subsequent_transfers,
+                "prohibited_actions": item.prohibited_actions,
+                "status": item.status, "notes": item.notes,
+            }
+        self._save_json("items.json", data)
+
+    def add_item(self, item: ItemProfile):
+        if item.name not in self.items:
+            self.items[item.name] = item
+            self._save_items()
+
+    def get_item(self, name: str) -> ItemProfile:
+        return self.items.get(name, ItemProfile(name=name))
+
+    def update_item(self, name: str, **kwargs):
+        """更新物品字段并持久化"""
+        if name not in self.items:
+            self.items[name] = ItemProfile(name=name)
+        item = self.items[name]
+        for k, v in kwargs.items():
+            if hasattr(item, k) and v:
+                setattr(item, k, v)
+        self._save_items()
+
+    def transfer_item(self, item_name: str, from_holder: str, to_holder: str,
+                      chapter: int, reason: str = ""):
+        """记录物品转移"""
+        if item_name not in self.items:
+            return
+        item = self.items[item_name]
+        item.current_holder = to_holder
+        item.subsequent_transfers.append({
+            "from": from_holder, "to": to_holder,
+            "chapter": chapter, "reason": reason,
+        })
+        self._save_items()
+
+    def get_item_status_table(self) -> str:
+        """生成「物品状态追踪表」（方案1：每次生成前注入 prompt）"""
+        if not self.items:
+            return "（暂无关键物品记录）"
+        lines = ["【已出现的关键物品及其归属/状态（⚠️ 写作前必查，防止重复赠与）】"]
+        for name, item in self.items.items():
+            lines.append(
+                f"  - {name}（{item.type}）：第{item.first_appeared}章由「{item.first_giver}」"
+                f"给予「{item.current_holder}」，当前状态={item.status}"
+            )
+            if item.subsequent_transfers:
+                for t in item.subsequent_transfers:
+                    lines.append(f"    → 第{t['chapter']}章：{t['from']} → {t['to']}（{t['reason']}）")
+            if item.prohibited_actions:
+                lines.append(f"    ⛔ 禁止操作：{', '.join(item.prohibited_actions)}")
+        lines.append("⚠️ 以上物品已有归属，后文不得再次出现「他人将同一物品赠予/交给角色」的情节！")
+        return "\n".join(lines)
 
     # ========== 导出（给可视化用）==========
 

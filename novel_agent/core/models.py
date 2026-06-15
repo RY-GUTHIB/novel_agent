@@ -59,6 +59,23 @@ class CharacterKnowledge:
     detail: str = ""
 
 
+# ============ 物品相关 ============
+
+@dataclass
+class ItemProfile:
+    """物品状态追踪（方案1+2+5：显式状态管理，防止重复赠与/转移）"""
+    name: str                         # 物品名（如"独狼令"）
+    type: str = ""                    # 类型：信物/武器/法宝/丹药/材料/秘笈/其他
+    description: str = ""             # 描述
+    first_appeared: int = 1           # 首次出场章节
+    first_giver: str = ""             # 首次赋予者（方案2：唯一指定）
+    current_holder: str = ""          # 当前持有者
+    subsequent_transfers: List[dict] = field(default_factory=list)  # 后续转移 [{from, to, chapter, reason}]
+    prohibited_actions: List[str] = field(default_factory=list)     # 禁止操作 ["give_again_by_other", "duplicate"]
+    status: str = "active"            # active/lost/destroyed/returned
+    notes: str = ""
+
+
 # ============ 地点相关 ============
 
 @dataclass
