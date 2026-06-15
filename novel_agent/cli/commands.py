@@ -328,6 +328,11 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
         else:
             no_improvement_count = 0
 
+        # 如果连续2次修订分数都没提升，跳过本次修订直接终止
+        if no_improvement_count >= 2:
+            print(f"\n⚠️ 连续{no_improvement_count}次修订分数未提升，跳过修订直接终止")
+            break
+
         print(f"\n🔧 根据审校意见自动修改（第{rev+1}次修订）...")
         content = writer.revise_chapter(
             chapter=chapter, title=title, original_content=content,
@@ -339,11 +344,6 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
 
         # 修订后记录本次分数，供下一轮比较
         prev_score = report["overall_score"]
-
-        # 如果连续2次修订后分数都没提升，下一轮审校后提前终止
-        if no_improvement_count >= 2:
-            print(f"\n⚠️ 连续{no_improvement_count}次修订分数未提升，提前终止修订")
-            break
 
     # 审校循环结束后，提取最终版本的伏笔和自动回收
     writer.finalize_foreshadows(content, chapter, characters)
