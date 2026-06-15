@@ -152,6 +152,8 @@ class TimelineEvent:
     characters: List[str]
     location: str = ""
     importance: int = 1
+    season: str = ""          # 季节（春/夏/秋/冬），用于时间一致性校验
+    time_elapsed: str = ""    # 与上一章的时间间隔（如"一日""三日""半月"），用于时间一致性校验
 
 
 @dataclass

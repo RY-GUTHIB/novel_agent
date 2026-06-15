@@ -89,6 +89,7 @@ class ReviewerAgent:
                     "writing": "文笔质量", "rules": "规则一致性", "knowledge": "角色认知一致性",
                     "acquaintance": "角色相识一致性", "personality": "性格一致性",
                     "emotion": "情绪价值", "comparison": "实力对比逻辑", "recall": "前文回忆真实性",
+                    "time": "时间一致性",
                 }
                 for key, cn_name in field_map.items():
                     if key in parsed:

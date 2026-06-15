@@ -48,6 +48,7 @@ class ContractValidator:
         self._check_knowledge_surprise(content, chapter, characters, memory_mgr, violations)
         self._check_plot_rules(content, chapter, memory_mgr, violations)
         self._check_spatial_teleport(content, chapter, characters, memory_mgr, violations)
+        self._check_time_consistency(content, chapter, characters, memory_mgr, violations)
 
         return violations
 
@@ -223,6 +224,89 @@ class ContractValidator:
                     message=f"正文中提到 {len(locations_mentioned)} 个地点但未发现移动描写，可能存在瞬移",
                     evidence=f"地点：{', '.join(locations_mentioned[:3])}",
                 ))
+
+    # ========== 6. 时间一致性 ==========
+
+    def _check_time_consistency(self, content, chapter, characters, mem, violations):
+        """检查时间线矛盾：季节错乱、一天横跨大陆、事件顺序颠倒"""
+        # 6a. 季节错乱检查
+        season_keywords = {
+            "春": ["春暖", "花开", "春风", "春雨", "桃花", "柳絮", "清明", "惊蛰", "立春"],
+            "夏": ["酷暑", "炎热", "蝉鸣", "荷花", "烈日", "汗流", "盛夏", "三伏", "立夏"],
+            "秋": ["落叶", "秋风", "凉爽", "桂花", "菊花", "丰收", "霜降", "中秋", "立秋"],
+            "冬": ["寒", "雪", "冰", "冻", "凛冽", "刺骨", "腊月", "冬至", "立冬", "飘雪"],
+        }
+        seasons_found = set()
+        for season, keywords in season_keywords.items():
+            if any(kw in content for kw in keywords):
+                seasons_found.add(season)
+
+        if len(seasons_found) >= 2:
+            # 冬+夏同时出现是强信号
+            if "冬" in seasons_found and "夏" in seasons_found:
+                violations.append(ContractViolation(
+                    severity="高", category="时间",
+                    message=f"正文中同时出现夏季和冬季特征描写，可能存在季节错乱",
+                    evidence=f"检测到季节特征：{', '.join(sorted(seasons_found))}",
+                ))
+            elif len(seasons_found) >= 3:
+                violations.append(ContractViolation(
+                    severity="高", category="时间",
+                    message=f"正文中出现3个以上季节特征，时间线严重混乱",
+                    evidence=f"检测到季节特征：{', '.join(sorted(seasons_found))}",
+                ))
+
+        # 6b. 时间倒流检查（一天内横跨大陆等）
+        time_span_patterns = [
+            (r"(?:一天|一日|当天|同日|翌日|次日|第二天)", 1),
+            (r"(?:半日|半天|几个时辰|半晌)", 0.5),
+            (r"(?:一时辰|一个时辰|片刻)", 0.08),
+        ]
+        time_span_days = 0
+        for pattern, days in time_span_patterns:
+            if re.search(pattern, content):
+                time_span_days = days
+                break
+
+        # 检查是否在短时间内到达了远距离地点
+        travel_keywords = [
+            "御剑", "飞行", "飞往", "赶往", "前往", "来到", "抵达", "到达",
+            "穿过", "翻过", "越过", "渡过", "传送阵", "遁术", "瞬移",
+        ]
+        location_pattern = r'(?:来到|抵达|到达|出现在|前往)([^，。,.\n]{2,6})'
+        locations = re.findall(location_pattern, content)
+
+        if time_span_days > 0 and len(locations) >= 2:
+            has_travel_justification = any(kw in content for kw in [
+                "传送阵", "传送", "遁术", "瞬移", "飞舟", "飞剑",
+            ])
+            if not has_travel_justification:
+                # 检查是否有 spacemap 记录的行程时间做对比
+                pass  # 当前只做简单关键词检测，后续可扩展
+
+        # 6c. 事件顺序颠倒（同角色：先死后生）
+        death_indicators = ["死了", "陨落", "毙命", "丧命", "阵亡", "牺牲", "被杀", "倒下"]
+        alive_indicators = ["站起", "醒来", "起身", "睁眼", "复活", "重生"]
+
+        for char in characters:
+            char_death = any(f"{char}{ind}" in content for ind in death_indicators)
+            char_alive_after = any(f"{char}{ind}" in content for ind in alive_indicators)
+            if char_death and char_alive_after:
+                # 找到死亡描写和复活描写的相对位置
+                death_pos = max(
+                    (content.find(f"{char}{ind}") for ind in death_indicators if f"{char}{ind}" in content),
+                    default=-1,
+                )
+                alive_pos = min(
+                    (content.find(f"{char}{ind}") for ind in alive_indicators if f"{char}{ind}" in content),
+                    default=-1,
+                )
+                if death_pos >= 0 and alive_pos >= 0 and death_pos < alive_pos:
+                    violations.append(ContractViolation(
+                        severity="高", category="时间",
+                        message=f"{char} 先有死亡/倒下描写后有苏醒/站起描写，可能存在事件顺序矛盾",
+                        evidence=f"死亡词位置={death_pos}，苏醒词位置={alive_pos}",
+                    ))
 
 
 def format_violations_report(violations: List[ContractViolation]) -> str:

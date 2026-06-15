@@ -210,6 +210,24 @@ class ContinuityGuard:
             "  3. 非相邻地点之间移动需标注时间消耗（参照下文地点拓扑）",
         ])
 
+        # 时间一致性：注入上一章的时间信息和季节
+        prev_event = None
+        for e in reversed(self.timeline):
+            if e.chapter < chapter:
+                prev_event = e
+                break
+        if prev_event:
+            lines.append("\n## ⚠️ 时间一致性约束（必须遵守）：")
+            lines.append(f"  上一章（第{prev_event.chapter}章）时间：{prev_event.time_tag}")
+            if prev_event.season:
+                lines.append(f"  上一章季节：{prev_event.season}")
+            if prev_event.time_elapsed:
+                lines.append(f"  距再上一章时间间隔：{prev_event.time_elapsed}")
+            lines.append("  1. 本章时间标签必须晚于上一章，不能时间倒流")
+            lines.append("  2. 季节描写必须与上一章季节连贯（除非明确写了\"数月后\"等跨季过渡）")
+            lines.append("  3. 一天/半日内不能跨越需要数日路程的距离（除非有传送手段且明写）")
+            lines.append("  4. 不要在单章中同时出现冬季和夏季的特征描写")
+
         if plot_rules_text and plot_rules_text != "（无特殊剧情规则）":
             lines.append(f"\n{plot_rules_text}")
 
