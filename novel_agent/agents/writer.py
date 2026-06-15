@@ -51,7 +51,8 @@ class WriterAgent:
 
     def write_chapter(self, chapter: int, title: str, summary: str,
                        time_tag: str, location: str, characters: List[str],
-                       temperature: float = config.TEMPERATURE) -> str:
+                       temperature: float = config.TEMPERATURE) -> tuple:
+        """返回 (content, settings_json) 以便审校通过后调用 finalize_chapter 回写设定"""
         # 1. 冲突检测 + 预检
         char_loc_map = {char: location for char in characters}
         warnings = self.continuity.check_continuity(chapter, char_loc_map, time_tag)
@@ -76,16 +77,17 @@ class WriterAgent:
         # 4. 解析：分离正文和设定 JSON
         content, settings_json = self._split_output_and_settings(raw_output)
 
-        # 5. 后处理（审校前跳过伏笔，避免记录错误伏笔）
+        # 5. 审校前处理：只做 RAG 存储，不写任何设定（推迟到 finalize_chapter）
         self._post_write(chapter, title, content, summary, time_tag, location, characters,
-                         settings_json=settings_json, skip_foreshadow=True)
+                         settings_json=settings_json)
 
-        return content
+        return content, settings_json
 
     def revise_chapter(self, chapter: int, title: str, original_content: str,
                         review_report: str, summary: str, time_tag: str,
                         location: str, characters: List[str],
-                        temperature: float = 0.3) -> str:
+                        temperature: float = 0.3) -> tuple:
+        """返回 (content, settings_json) 以便审校通过后调用 finalize_chapter 回写设定"""
         generation_contract = self.memory.get_generation_contract(chapter, characters)
         system_prompt = CHAPTER_REVISER_SYSTEM_PROMPT.format(word_target=config.CHAPTER_WORD_TARGET)
         user_prompt = self._build_reviser_user_prompt(
@@ -99,8 +101,8 @@ class WriterAgent:
         content, settings_json = self._split_output_and_settings(raw_output)
 
         self._post_write(chapter, title, content, summary, time_tag, location, characters,
-                         skip_scan=True, settings_json=settings_json, skip_foreshadow=True)
-        return content
+                         settings_json=settings_json)
+        return content, settings_json
 
     # ========== Prompt 构建 ==========
 
@@ -334,33 +336,42 @@ class WriterAgent:
     # ========== 写后处理 ==========
 
     def _post_write(self, chapter, title, content, summary, time_tag,
-                     location, characters, skip_scan=False, settings_json=None,
-                     skip_foreshadow=False):
-        """写后处理
-        :param skip_foreshadow: True 时跳过伏笔提取/回收（审校前暂不记录）
+                     location, characters, skip_scan=False, settings_json=None):
+        """审校前处理：只做 RAG 存储（无副作用），所有设定回写推迟到 finalize_chapter"""
+        # RAG 存储（审校前就可以存，不影响数据正确性）
+        if self.rag:
+            try:
+                self.rag.add_chapter(chapter, title, content)
+            except (IOError, OSError, json.JSONDecodeError, ValueError) as e:
+                print(f"  [WARN] RAG 存储失败: {e}")
+
+    def finalize_chapter(self, chapter: int, content: str, summary: str,
+                         time_tag: str, location: str, characters: list,
+                         settings_json: str = None):
+        """审校通过/审校上限后的统一设定回写入口。
+        所有人物/物品/地理位置/连续性/伏笔/世界设定等不可逆操作都在这里执行，
+        确保错误内容不会被写入数据层。
+        以后有新的设定回写需求，统一加在这个方法里。
         """
-        # 0. 契约校验（生成后立即检查，不调 LLM）
+        # 0. 契约校验（最终版本校验）
         violations = self.validator.validate(content, chapter, characters, self.memory)
         if violations:
             report = format_violations_report(violations)
             print(f"\n{report}")
             high_count = sum(1 for v in violations if v.severity == "高")
             if high_count > 0:
-                print(f"  ⚠️ 发现 {high_count} 个高严重性契约违反，建议审校时重点关注")
+                print(f"  ⚠️ 最终版本仍有 {high_count} 个高严重性契约违反，已记录但继续回写")
 
-        # 1. 伏笔提取/回收（仅在审校通过后执行）
-        if not skip_foreshadow:
-            new_fs = self._extract_foreshadows(content, chapter)
-            for fs_content in new_fs:
-                self.foreshadow.plant(chapter=chapter, content=fs_content, type="mystery",
-                                      related_characters=characters, importance=2)
-            resolved_count = self.foreshadow.auto_resolve(content, chapter)
-            if resolved_count:
-                print(f"  [伏笔回收] 自动回收 {resolved_count} 个伏笔")
-            if new_fs:
-                print(f"  [伏笔提取] 提取 {len(new_fs)} 个新伏笔")
+        # 1. 应用所有设定（人物/物品/位置/势力/世界设定/场景事件）
+        if settings_json:
+            try:
+                parsed = self._safe_parse_json(settings_json)
+                if parsed:
+                    self._apply_all_settings(parsed, chapter)
+            except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+                print(f"  [WARN] 设定回写失败: {e}")
 
-        # 2. 更新连续性
+        # 2. 连续性更新
         self.continuity.add_event(chapter=chapter, time_tag=time_tag, event=summary,
                                   characters=characters, location=location, importance=3)
         for char in characters:
@@ -371,25 +382,21 @@ class WriterAgent:
                                                        location=location, note="粗粒度回退")
             if char in self.memory.characters:
                 self.memory.update_character_status(char, notes=f"第{chapter}章出现于{location}")
-
-        # 3. RAG 存储
-        if self.rag:
-            try:
-                self.rag.add_chapter(chapter, title, content)
-            except (IOError, OSError, json.JSONDecodeError, ValueError) as e:
-                print(f"  [WARN] RAG 存储失败: {e}")
-
-        # 4. 保存
         self.continuity.save_all()
+
+        # 3. 伏笔提取/回收
+        new_fs = self._extract_foreshadows(content, chapter)
+        for fs_content in new_fs:
+            self.foreshadow.plant(chapter=chapter, content=fs_content, type="mystery",
+                                  related_characters=characters, importance=2)
+        resolved_count = self.foreshadow.auto_resolve(content, chapter)
+        if resolved_count:
+            print(f"  [伏笔回收] 自动回收 {resolved_count} 个伏笔")
+        if new_fs:
+            print(f"  [伏笔提取] 提取 {len(new_fs)} 个新伏笔")
         self.foreshadow._save()
 
-        # 5. 应用设定（从合并输出中解析）
-        if settings_json:
-            self._apply_settings(settings_json, chapter)
-        else:
-            print(f"  [设定] 未解析到设定 JSON，跳过")
-
-        # 6. 更新伏笔总览
+        # 4. 更新伏笔总览
         try:
             self.foreshadow.export_to_markdown()
         except (IOError, OSError) as e:
@@ -419,8 +426,9 @@ class WriterAgent:
             print(f"  [合并解析] 未找到分隔符，正文 {len(raw_output)} 字")
             return raw_output, None
 
-    def _apply_settings(self, parsed: dict, chapter: int):
-        """应用从合并输出中解析的设定 JSON（复用原有 9 个方法）"""
+    def _apply_all_settings(self, parsed: dict, chapter: int):
+        """统一回写所有设定（人物/物品/位置/势力/世界设定/场景事件/连续性）。
+        只应在审校通过后由 finalize_chapter 调用。以后有新设定类型，统一加在这里。"""
         if not parsed:
             return
         try:
@@ -435,7 +443,7 @@ class WriterAgent:
             self._apply_scene_events(parsed.get("scene_events", []), chapter)
             self._apply_items(parsed.get("items", []), chapter)
         except (KeyError, ValueError, TypeError, AttributeError) as e:
-            print(f"  [WARN] 设定应用失败: {e}")
+            print(f"  [WARN] 设定回写失败: {e}")
 
     # ========== 伏笔提取 ==========
 

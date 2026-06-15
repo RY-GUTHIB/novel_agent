@@ -289,12 +289,13 @@ def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
     reviewer = ReviewerAgent(memory, continuity, foreshadow)
 
     try:
-        content = writer.write_chapter(chapter=chapter, title=title, summary=summary,
+        content, settings_json = writer.write_chapter(chapter=chapter, title=title, summary=summary,
                                         time_tag=time_tag, location=location, characters=characters)
         writer.save_chapter(chapter, title, content)
 
         # 审校循环
-        content = _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, location, characters)
+        content, settings_json = _review_loop(writer, reviewer, chapter, title, content, summary,
+                                               time_tag, location, characters, settings_json)
 
         update_project_progress(project_name, chapters_written=chapter)
         rebuild_novel_md(config.OUTPUT_DIR)
@@ -332,7 +333,7 @@ def _get_chapter_plan(outline: dict) -> list:
     return chapter_plan
 
 
-def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, location, characters):
+def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, location, characters, settings_json=None):
     max_revisions = 3
     prev_score = None
     no_improvement_count = 0
@@ -351,19 +352,17 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
             break
 
         # 收敛检测：本次审校的分数 vs 上次修订后的分数
-        # 注意：首次审校(rev=0)没有 prev_score，直接进入修订
         if prev_score is not None and report["overall_score"] <= prev_score:
             no_improvement_count += 1
         else:
             no_improvement_count = 0
 
-        # 如果连续2次修订分数都没提升，跳过本次修订直接终止
         if no_improvement_count >= 2:
             print(f"\n⚠️ 连续{no_improvement_count}次修订分数未提升，跳过修订直接终止")
             break
 
         print(f"\n🔧 根据审校意见自动修改（第{rev+1}次修订）...")
-        content = writer.revise_chapter(
+        content, settings_json = writer.revise_chapter(
             chapter=chapter, title=title, original_content=content,
             review_report=report["raw_text"], summary=summary,
             time_tag=time_tag, location=location, characters=characters,
@@ -371,12 +370,15 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
         writer.save_chapter(chapter, title, content)
         print("  修订完成，重新审校...")
 
-        # 修订后记录本次分数，供下一轮比较
         prev_score = report["overall_score"]
 
-    # 审校循环结束后，提取最终版本的伏笔和自动回收
-    writer.finalize_foreshadows(content, chapter, characters)
-    return content
+    # 审校通过/上限后，统一回写所有设定（人物/物品/位置/连续性/伏笔）
+    writer.finalize_chapter(
+        chapter=chapter, content=content, summary=summary,
+        time_tag=time_tag, location=location, characters=characters,
+        settings_json=settings_json,
+    )
+    return content, settings_json
 
 
 def cmd_review(memory, continuity, foreshadow, project_name):
