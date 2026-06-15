@@ -172,11 +172,20 @@ class WriterAgent:
             c = self.memory.characters[name]
             abilities_str = ", ".join(c.abilities)
             rels_str = ", ".join(f"{k}({v})" for k, v in c.relationships.items())
-            lines.append(
-                f"  {name}：{c.gender}，{c.age}，修为={c.cultivation}，"
-                f"位置={c.current_location or '未知'}，"
-                f"能力[{abilities_str}]，关系[{rels_str}]，状态={c.status}"
-            )
+            parts = [
+                f"  {name}：{c.gender}，{c.age}",
+                f"修为={c.cultivation}" if c.cultivation else "修为=未知",
+                f"位置={c.current_location or '未知'}",
+                f"核心价值观={c.core_values}" if c.core_values else "",
+                f"核心欲望={c.core_desire}" if c.core_desire else "",
+                f"核心恐惧={c.core_fear}" if c.core_fear else "",
+                f"核心缺陷={c.flaw}" if c.flaw else "",
+                f"阵营={c.alignment}" if c.alignment else "",
+                f"能力[{abilities_str}]",
+                f"关系[{rels_str}]",
+                f"状态={c.status}",
+            ]
+            lines.append("，".join(p for p in parts if p))
         return "\n".join(lines) if lines else "（无）"
 
     # ========== 章节节奏/爽点/钩子辅助方法 ==========
@@ -455,7 +464,9 @@ class WriterAgent:
                                     existing[k] = v
                         else:
                             char.relationships_detail[other] = ctx
-                for field_name in ["cultivation", "current_location", "appearance", "personality", "status", "goals", "notes"]:
+                for field_name in ["cultivation", "current_location", "appearance", "personality", "status",
+                                    "goals", "notes", "core_values", "core_desire", "core_fear",
+                                    "flaw", "alignment", "background", "speaking_style"]:
                     val = updates.get(field_name, "")
                     if val:
                         setattr(char, field_name, val)

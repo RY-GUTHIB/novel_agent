@@ -38,6 +38,11 @@ class CharacterProfile:
     relationships_detail: Dict[str, dict] = field(default_factory=dict)
     cultivation: str = ""
     current_location: str = ""
+    core_values: str = ""       # 核心价值观（如"家族荣耀高于一切"）
+    core_desire: str = ""       # 核心欲望/目标（比goals更精确的内驱力）
+    core_fear: str = ""         # 核心恐惧（最怕失去/面对什么）
+    flaw: str = ""              # 核心缺陷（性格弱点，成长弧光的起点）
+    alignment: str = ""         # 阵营倾向（如"守序善良""混乱中立"）
     status: str = "alive"
     first_appeared: int = 1
     arc: str = ""

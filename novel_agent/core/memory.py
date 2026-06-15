@@ -225,13 +225,26 @@ class MemoryManager:
         lines = [
             f"【人物：{c.name}】",
             f"性别：{c.gender}，年龄：{c.age}" + (f"，修为：{c.cultivation}" if c.cultivation else ""),
+            f"当前位置：{c.current_location or '未知'}",
             f"外貌：{c.appearance}",
             f"性格：{c.personality}",
             f"背景：{c.background}",
             f"目标：{c.goals}",
+        ]
+        if c.core_values:
+            lines.append(f"核心价值观：{c.core_values}")
+        if c.core_desire:
+            lines.append(f"核心欲望：{c.core_desire}")
+        if c.core_fear:
+            lines.append(f"核心恐惧：{c.core_fear}")
+        if c.flaw:
+            lines.append(f"核心缺陷：{c.flaw}")
+        if c.alignment:
+            lines.append(f"阵营倾向：{c.alignment}")
+        lines.extend([
             f"语言风格：{c.speaking_style}",
             f"能力：{', '.join(c.abilities)}",
-        ]
+        ])
         if c.relationships_detail:
             lines.append("人物关系（详细）：")
             stance_map = {"friendly": "🟢友好", "neutral": "⚪中立", "hostile": "🔴敌对", "adversarial": "🟠对立"}
