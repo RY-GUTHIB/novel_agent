@@ -48,21 +48,35 @@ class PlannerAgent:
 
 请严格按照 JSON 格式输出。"""
 
+        base_user_prompt = user_prompt  # 保存原始 prompt，不累积追加
         max_retries = 2
+        current_temperature = 0.7
+        current_max_tokens = 16384
         for attempt in range(max_retries + 1):
+            # 重试时不累积追加文本，而是替换为精简提示 + 增大输出空间
+            if attempt == 0:
+                retry_hint = ""
+            elif attempt == 1:
+                retry_hint = "\n\n⚠️ 上次输出 JSON 格式错误。请只输出 JSON，不要加任何解释文字或 markdown 标记。"
+                current_temperature = 0.5
+                current_max_tokens = 20480
+            else:
+                retry_hint = "\n\n⚠️ 上次输出 JSON 被截断或格式错误。请精简内容、确保 JSON 完整闭合。只输出纯 JSON。"
+                current_temperature = 0.3
+                current_max_tokens = 24576
+
             response = generate(
                 system_prompt=PLANNER_SYSTEM_PROMPT,
-                user_prompt=user_prompt,
-                temperature=0.7,
-                max_tokens=16384,
+                user_prompt=base_user_prompt + retry_hint,
+                temperature=current_temperature,
+                max_tokens=current_max_tokens,
             )
 
             try:
                 outline = self._extract_json(response)
             except ValueError as e:
-                if "截断" in str(e) and attempt < max_retries:
-                    print(f"  [WARN] JSON 解析失败: {e}，重试 ({attempt+2}/{max_retries+1})...")
-                    user_prompt += "\n\n⚠️ 上次输出 JSON 被截断。请精简输出，确保 JSON 完整闭合。只输出 JSON，不要加解释文字。"
+                if attempt < max_retries:
+                    print(f"  [WARN] {e}，重试 ({attempt+2}/{max_retries+1})...")
                     continue
                 raise
 
@@ -72,7 +86,6 @@ class PlannerAgent:
 
             if attempt < max_retries:
                 print(f"  [WARN] JSON 解析失败，重试 ({attempt+2}/{max_retries+1})...")
-                user_prompt += "\n\n⚠️ 请只输出 JSON，不要加任何解释文字或 markdown 标记。"
 
         raise ValueError("大纲生成失败：LLM 返回格式错误，已重试3次仍无法解析")
 

@@ -6,6 +6,8 @@ generator.py - LLM调用封装（多后端支持）
 """
 
 import time
+import json
+import re
 import logging
 import config
 
@@ -204,6 +206,7 @@ def generate_stream(system_prompt: str, user_prompt: str,
 
     last_exc = None
     for attempt in range(MAX_RETRIES + 1):
+        chunks = []
         try:
             stream = client.chat.completions.create(
                 model=model,
@@ -219,8 +222,11 @@ def generate_stream(system_prompt: str, user_prompt: str,
             for chunk in stream:
                 delta = chunk.choices[0].delta.content
                 if delta:
-                    yield delta
-            return  # 成功
+                    chunks.append(delta)
+            # 全部收集成功后才 yield，避免重试时重复输出
+            for delta in chunks:
+                yield delta
+            return
         except Exception as e:
             last_exc = e
             err_str = str(e).lower()
@@ -237,43 +243,75 @@ def generate_stream(system_prompt: str, user_prompt: str,
 
 # ========== 公共 JSON 解析工具（供 planner/writer 等模块共用）==========
 
-import json as _json
-import re as _re
-
 
 def parse_json(text: str) -> dict:
-    """从 LLM 输出中提取 JSON 对象，多层 fallback"""
+    """从 LLM 输出中提取 JSON 对象，多层 fallback + 栈匹配避免贪婪误提取"""
+    # 第1层：直接解析
     try:
-        return _json.loads(text)
-    except _json.JSONDecodeError:
+        return json.loads(text)
+    except json.JSONDecodeError:
         pass
-    match = _re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+    # 第2层：提取 markdown 代码块
+    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
     if match:
         try:
-            return _json.loads(match.group(1))
-        except _json.JSONDecodeError:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
             pass
-    match = _re.search(r'\{[\s\S]*\}', text)
-    if match:
-        try:
-            return _json.loads(match.group(0))
-        except _json.JSONDecodeError:
-            pass
+    # 第3层：用栈算法找到第一个完整闭合的 JSON 对象（避免贪婪匹配吞入中间文本）
+    result = _extract_first_json_object(text)
+    if result is not None:
+        return result
+    return None
+
+
+def _extract_first_json_object(text: str) -> dict | None:
+    """用栈算法从文本中提取第一个完整闭合的 JSON 对象"""
+    start = text.find('{')
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                candidate = text[start:i + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    # 继续找下一个闭合点
+                    continue
     return None
 
 
 def parse_json_array(text: str) -> list:
     """从 LLM 输出中提取 JSON 数组，多层 fallback"""
     try:
-        result = _json.loads(text)
+        result = json.loads(text)
         return result if isinstance(result, list) else []
-    except _json.JSONDecodeError:
+    except json.JSONDecodeError:
         pass
-    match = _re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
     if match:
         try:
-            result = _json.loads(match.group(1))
+            result = json.loads(match.group(1))
             return result if isinstance(result, list) else []
-        except _json.JSONDecodeError:
+        except json.JSONDecodeError:
             pass
     return []

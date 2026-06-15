@@ -321,16 +321,12 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
             print(f"\n⚠️ 已达最大修订次数（{max_revisions}），接受当前版本")
             break
 
-        # 收敛检测：连续2次分数不升则提前终止
-        if prev_score is not None:
-            if report["overall_score"] <= prev_score:
-                no_improvement_count += 1
-                if no_improvement_count >= 2:
-                    print(f"\n⚠️ 连续{no_improvement_count}次修订分数未提升（{prev_score}→{report['overall_score']}），提前终止修订")
-                    break
-            else:
-                no_improvement_count = 0
-        prev_score = report["overall_score"]
+        # 收敛检测：本次审校的分数 vs 上次修订后的分数
+        # 注意：首次审校(rev=0)没有 prev_score，直接进入修订
+        if prev_score is not None and report["overall_score"] <= prev_score:
+            no_improvement_count += 1
+        else:
+            no_improvement_count = 0
 
         print(f"\n🔧 根据审校意见自动修改（第{rev+1}次修订）...")
         content = writer.revise_chapter(
@@ -340,6 +336,14 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
         )
         writer.save_chapter(chapter, title, content)
         print("  修订完成，重新审校...")
+
+        # 修订后记录本次分数，供下一轮比较
+        prev_score = report["overall_score"]
+
+        # 如果连续2次修订后分数都没提升，下一轮审校后提前终止
+        if no_improvement_count >= 2:
+            print(f"\n⚠️ 连续{no_improvement_count}次修订分数未提升，提前终止修订")
+            break
 
     # 审校循环结束后，提取最终版本的伏笔和自动回收
     writer.finalize_foreshadows(content, chapter, characters)

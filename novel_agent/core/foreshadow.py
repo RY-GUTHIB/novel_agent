@@ -81,17 +81,19 @@ class ForeshadowTracker:
                 return
 
     def auto_resolve(self, content: str, chapter: int) -> int:
-        """自动检测正文中是否兑现了待回收伏笔（仅依赖显式标记，不调 LLM）
+        """自动检测正文中是否兑现了待回收伏笔
         
-        检测方式：正文中的 [FS_RESOLVE: FS_xxx] 显式标记
+        检测方式：
+        1. 正文中的 [FS_RESOLVE: FS_xxx] 显式标记 → 自动回收
+        2. 待回收伏笔的关键词在正文中出现 → 输出候选提示（不自动回收）
         
         :return: 成功回收的伏笔数量
         """
-        # 显式标记 [FS_RESOLVE: FS_xxx] 或 [FS_RESOLVE：FS_xxx]
+        # 方式1：显式标记 [FS_RESOLVE: FS_xxx] → 自动回收
         resolve_matches = re.findall(r'\[FS_RESOLVE[：:]\s*(FS_\d+)\s*\]', content)
         resolved_ids = set(resolve_matches)
         
-        # 执行回收
+        # 执行自动回收
         count = 0
         for fs_id in resolved_ids:
             try:
@@ -102,6 +104,35 @@ class ForeshadowTracker:
         
         if count:
             self._save()
+        
+        # 方式2：关键词候选提示（不自动回收，仅提示用户确认）
+        pending = self.get_pending(before_chapter=chapter + 1)
+        candidates = []
+        for fs in pending:
+            if fs.id in resolved_ids:
+                continue
+            keywords = re.findall(r'[\u4e00-\u9fa5]{3,10}', fs.content)
+            if not keywords:
+                continue
+            kw_count = len(keywords)
+            if kw_count <= 3:
+                required = kw_count
+            elif kw_count <= 6:
+                required = max(kw_count - 1, 3)
+            else:
+                required = max(kw_count * 2 // 3, 4)
+            match_count = sum(1 for kw in keywords if kw in content)
+            if match_count >= required:
+                candidates.append(fs)
+        
+        if candidates:
+            print(f"  [伏笔候选] 以下伏笔可能在本章被兑现（未自动回收，请手动确认）：")
+            for fs in candidates:
+                chars = f" | 人物：{', '.join(fs.related_characters)}" if fs.related_characters else ""
+                print(f"    [{fs.id}] 第{fs.chapter_planted}章（重要度{fs.importance}）{chars}")
+                print(f"      内容：{fs.content[:60]}{'...' if len(fs.content) > 60 else ''}")
+            print(f"    使用 resolve-fs 命令手动回收")
+        
         return count
 
     def get_pending(self, before_chapter: int = None) -> List[Foreshadow]:

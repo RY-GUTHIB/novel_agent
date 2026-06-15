@@ -368,7 +368,7 @@ class WriterAgent:
             self._apply_character_knowledge(parsed.get("character_knowledge", []), chapter)
             self._apply_sect_factions(parsed.get("sect_factions", []), chapter)
             self._apply_scene_events(parsed.get("scene_events", []), chapter)
-        except Exception as e:
+        except (KeyError, ValueError, TypeError, AttributeError) as e:
             print(f"  [WARN] 设定应用失败: {e}")
 
     # ========== 伏笔提取 ==========
@@ -379,11 +379,11 @@ class WriterAgent:
         要求内容至少 4 个中文字符，过滤误匹配。
         """
         results = []
-        # 提取 [FS: xxx] 标记，要求内容至少 4 个中文字符
+        # 提取 [FS: xxx] 标记，要求内容至少 2 个中文字符（允许短伏笔如"破局"）
         # 使用普通字符串（非 raw），避免 Python 3.12+ 的无效转义警告
-        results.extend(re.findall('\\[FS:\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{3,}?)\\s*\\]', content))
-        results.extend(re.findall('FS：\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{3,}?)(?:\\r?\\n|$)', content))
-        results.extend(re.findall('\\[FS：\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{3,}?)\\s*\\]', content))
+        results.extend(re.findall('\\[FS:\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{1,}?)\\s*\\]', content))
+        results.extend(re.findall('FS：\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{1,}?)(?:\\r?\\n|$)', content))
+        results.extend(re.findall('\\[FS：\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{1,}?)\\s*\\]', content))
         return list(set(results))
 
     # ========== 设定提取（已合并到写作 prompt 的 ===SETTINGS_JSON=== 输出，以下方法已废弃）==========
