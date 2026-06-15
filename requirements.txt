@@ -1,11 +1,12 @@
 # novel_agent/requirements.txt
 # 核心依赖
-openai>=1.0.0          # DeepSeek使用OpenAI兼容API
-chromadb>=0.5.0         # 向量数据库（RAG）
-tiktoken>=0.7.0         # token计数
+openai>=1.0.0          # DeepSeek/Qwen/Ollama 使用 OpenAI 兼容 API
+tiktoken>=0.7.0        # token 计数
 
-# 如用本地模型（可选）
-# ollama>=0.1.0
+# 向量数据库（RAG，可选）
+chromadb>=0.5.0
 
-# 如需要高级Agent框架（可选）
-# langchain>=0.2.0
+# 其他 LLM 后端（按需安装）
+# google-generativeai>=0.8.0  # Gemini
+# anthropic>=0.40.0            # Claude
+# ollama>=0.1.0                # 本地模型

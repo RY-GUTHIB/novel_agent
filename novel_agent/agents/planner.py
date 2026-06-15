@@ -283,9 +283,12 @@ class PlannerAgent:
 
     @staticmethod
     def _extract_json(text: str) -> Dict:
-        """从 LLM 输出中提取 JSON（容错，支持截断修复）"""
+        """从 LLM 输出中提取 JSON（容错，不修复截断——截断则报错要求重试）"""
         import json
         import re
+        import logging
+
+        logger = logging.getLogger(__name__)
 
         # 尝试直接解析
         try:
@@ -309,34 +312,19 @@ class PlannerAgent:
             except json.JSONDecodeError:
                 pass
 
-        # 截断修复：LLM 输出可能被 max_tokens 截断，尝试补全
+        # 截断检测：LLM 输出可能被 max_tokens 截断
+        # 不再尝试盲目补全，直接报错要求重试
         match = re.search(r'\{[\s\S]*', text)
         if match:
             partial = match.group(0)
-            # 尝试逐步补全括号
-            for _ in range(20):
-                try:
-                    return json.loads(partial)
-                except json.JSONDecodeError:
-                    # 计算缺少的右括号
-                    open_braces = partial.count('{') - partial.count('}')
-                    open_brackets = partial.count('[') - partial.count(']')
-                    if open_braces <= 0 and open_brackets <= 0:
-                        break
-                    # 在最后一个完整值后截断并补全
-                    # 尝试找最后一个逗号或冒号后截断
-                    for trim_char in [',', ':']:
-                        last_pos = partial.rfind(trim_char)
-                        if last_pos > 0:
-                            trimmed = partial[:last_pos]
-                            # 补全缺失的右括号
-                            needed_braces = trimmed.count('{') - trimmed.count('}')
-                            needed_brackets = trimmed.count('[') - trimmed.count(']')
-                            try:
-                                return json.loads(trimmed + ']' * max(0, needed_brackets) + '}' * max(0, needed_braces))
-                            except json.JSONDecodeError:
-                                continue
-                    break
+            open_braces = partial.count('{') - partial.count('}')
+            open_brackets = partial.count('[') - partial.count(']')
+            if open_braces > 0 or open_brackets > 0:
+                logger.error(f"LLM 返回的 JSON 被截断（缺少 {open_braces} 个 '}}', {open_brackets} 个 ']'），请增大 max_tokens 或重试")
+                raise ValueError(
+                    f"大纲 JSON 被截断（缺少 {open_braces} 个闭合花括号, {open_brackets} 个闭合方括号）。"
+                    f"请增大 max_tokens 后重试。"
+                )
 
         return None
 

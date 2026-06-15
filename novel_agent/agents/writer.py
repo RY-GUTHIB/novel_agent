@@ -9,10 +9,13 @@ writer_agent.py - 章节写作 Agent
 """
 
 import json
+import logging
 import re
 import config
 from pathlib import Path
 from typing import Dict, List
+
+logger = logging.getLogger(__name__)
 
 from novel_agent.llm.client import generate
 from novel_agent.core.memory import MemoryManager
@@ -411,8 +414,8 @@ class WriterAgent:
             max_tokens=config.MAX_TOKENS,
         )
 
-        # 3. 后处理：提取伏笔标注（同 write_chapter）
-        new_foreshadows = self._extract_foreshadows(content, chapter)
+        # 3. 后处理：提取伏笔标注（修订时跳过 LLM 扫描，只提取手动标注）
+        new_foreshadows = self._extract_foreshadows(content, chapter, skip_scan=True)
         for fs_content in new_foreshadows:
             self.foreshadow.plant(
                 chapter=chapter,
@@ -463,8 +466,10 @@ class WriterAgent:
 
         return content
 
-    def _extract_foreshadows(self, content: str, chapter: int) -> List[str]:
-        """从正文中提取伏笔（两种方式：手动标注 + LLM自动扫描）"""
+    def _extract_foreshadows(self, content: str, chapter: int, skip_scan: bool = False) -> List[str]:
+        """从正文中提取伏笔（两种方式：手动标注 + LLM自动扫描）
+        :param skip_scan: 为 True 时跳过 LLM 自动扫描（修订时使用，节省 API 调用）
+        """
         import json as _json
         results = []
 
@@ -478,6 +483,9 @@ class WriterAgent:
         # 也支持 [FS：...] 格式
         matches_cn_bracket = re.findall(r'\[FS：\s*(.*?)\s*\]', content)
         results.extend(matches_cn_bracket)
+
+        if skip_scan:
+            return list(set(results))
 
         # 方式2：LLM 自动扫描（从正文中提取潜在伏笔）
         try:
@@ -1070,20 +1078,13 @@ class WriterAgent:
 
     def save_chapter(self, chapter: int, title: str, content: str,
                       output_dir: str = None):
-        """保存章节到文件"""
+        """保存章节到文件（只写 chapters/ 子目录，novel.md 由 rebuild_novel_md 统一重建）"""
         out_dir = Path(output_dir or config.OUTPUT_DIR)
         out_dir.mkdir(parents=True, exist_ok=True)
         chapters_dir = out_dir / "chapters"
         chapters_dir.mkdir(parents=True, exist_ok=True)
 
-        # 追加模式写入 novel.md
-        novel_path = out_dir / "novel.md"
-        with open(novel_path, "a", encoding="utf-8") as f:
-            f.write(f"\n\n## 第{chapter}章 {title}\n\n")
-            f.write(content)
-            f.write("\n\n")
-
-        # 单独保存本章（存入 chapters/ 子目录）
+        # 单独保存本章
         chapter_path = chapters_dir / f"chapter_{chapter:03d}.md"
         with open(chapter_path, "w", encoding="utf-8") as f:
             f.write(f"# 第{chapter}章 {title}\n\n")

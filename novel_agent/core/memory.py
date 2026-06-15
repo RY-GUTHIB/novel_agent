@@ -183,7 +183,6 @@ class MemoryManager:
 
     def add_character(self, profile: CharacterProfile):
         self.characters[profile.name] = profile
-        self.save_all()
 
     def update_character_status(self, name: str, **kwargs):
         """更新人物状态（如位置、状态、关系）"""
@@ -322,7 +321,6 @@ class MemoryManager:
 
     def add_location(self, profile: LocationProfile):
         self.locations[profile.name] = profile
-        self.save_all()
 
     def get_location_prompt(self, name: str) -> str:
         if name not in self.locations:
@@ -342,7 +340,6 @@ class MemoryManager:
 
     def add_world_setting(self, setting: WorldSetting):
         self.world_settings[setting.key] = setting
-        self.save_all()
 
     def get_world_settings_prompt(self) -> str:
         lines = ["【世界观设定】"]

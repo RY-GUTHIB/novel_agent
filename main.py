@@ -14,10 +14,19 @@ main.py - 小说创作 Agent CLI（多项目版）
   python main.py list         # 列出所有小说项目
 """
 
+import glob
 import json
+import logging
 import sys
 import os
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("novel_agent")
 
 # Windows 控制台 UTF-8 修复
 if sys.platform == "win32":
@@ -321,7 +330,6 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, chapter=None):
         return
 
     if chapter is None:
-        import glob
         existing = glob.glob(str(Path(config.OUTPUT_DIR) / "chapters" / "chapter_*.md"))
         chapter = len(existing) + 1
 
@@ -448,7 +456,6 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, chapter=None):
 
 def cmd_review(memory, continuity, foreshadow, rag, project_name):
     """审校最新章节"""
-    import glob
     existing = sorted(glob.glob(str(Path(config.OUTPUT_DIR) / "chapters" / "chapter_*.md")))
     if not existing:
         print("❌ 没有已生成的章节")
@@ -523,7 +530,6 @@ def cmd_status(memory, continuity, foreshadow, rag, project_name):
         print("\n⚠️  未找到大纲（请先运行 python main.py new）")
 
     # 已生成章节
-    import glob
     existing = sorted(glob.glob(str(Path(config.OUTPUT_DIR) / "chapters" / "chapter_*.md")))
     print(f"\n已生成章节：{len(existing)} 章")
     for path in existing[-5:]:
@@ -742,7 +748,6 @@ def main():
 
 def rebuild_novel_md(output_dir: str = None):
     """重新生成 novel.md（从 chapters/ 目录按章节顺序拼接）"""
-    import glob
     from pathlib import Path as _Path
     out_dir = _Path(output_dir or config.OUTPUT_DIR)
     chapters_dir = out_dir / "chapters"

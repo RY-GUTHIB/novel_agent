@@ -103,7 +103,7 @@ def update_project_progress(project_name: str, chapters_written: int = None, out
     """更新项目进度（写完章节后调用）"""
     cfg = load_project_config(project_name)
     if chapters_written is not None:
-        cfg["chapters_written"] = chapters_written
+        cfg["chapters_written"] = max(cfg.get("chapters_written", 0), chapters_written)
     if outline is not None:
         cfg["chapters_planned"] = outline.get("total_chapters", 0)
     from datetime import datetime
