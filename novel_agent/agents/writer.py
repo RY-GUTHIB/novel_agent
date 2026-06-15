@@ -121,10 +121,14 @@ class WriterAgent:
         existing_loc_text = ", ".join(sorted(self.memory.locations.keys())) if self.memory.locations else "（无）"
         existing_sect_text = ", ".join(sorted(self.memory.sect_factions.keys())) if self.memory.sect_factions else "（无）"
 
+        # 上一章结尾钩子
+        prev_chapter_ending = self._get_prev_chapter_ending(chapter)
+        
         return CHAPTER_WRITER_USER_PROMPT.format(
             chapter=chapter, title=title, summary=summary,
             time_tag=time_tag, location=location, characters="、".join(characters),
             generation_contract=generation_contract,
+            prev_chapter_ending=prev_chapter_ending,
             continuity_prompt=continuity_prompt,
             character_prompts=character_prompts or "（无）",
             world_settings=self.memory.get_world_settings_prompt(),
@@ -143,6 +147,21 @@ class WriterAgent:
             beat_type=self._get_beat_type_for_chapter(chapter),
             hook_type=self._get_hook_type_for_chapter(chapter),
         )
+
+    def _get_prev_chapter_ending(self, chapter: int) -> str:
+        """读取上一章最后 200 字，用于钩子衔接"""
+        if chapter <= 1:
+            return "（这是第一章，无上一章）"
+        prev_chapter = chapter - 1
+        out_dir = Path(config.OUTPUT_DIR) / "chapters"
+        prev_path = out_dir / f"chapter_{prev_chapter:03d}.md"
+        if prev_path.exists():
+            with open(prev_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # 取最后 200 字
+            ending = text[-200:] if len(text) > 200 else text
+            return f"（上一章结尾：...{ending.strip()}）"
+        return "（上一章文件不存在）"
 
     def _build_char_summary(self, characters: list) -> str:
         """构建已有人物摘要（用于设定提取上下文）"""
@@ -237,12 +256,14 @@ class WriterAgent:
             plot_rules_text=self.memory.get_active_rules_prompt(),
             character_knowledge_text=self.memory.get_character_knowledge_prompt(chapter=chapter),
         )
+        prev_chapter_ending = self._get_prev_chapter_ending(chapter)
 
         return CHAPTER_REVISER_USER_PROMPT.format(
             chapter=chapter, title=title, review_report=review_report,
             original_content=original_content, summary=summary,
             time_tag=time_tag, location=location, characters="、".join(characters),
             generation_contract=generation_contract,
+            prev_chapter_ending=prev_chapter_ending,
             continuity_prompt=continuity_prompt,
             character_prompts=character_prompts or "（无）",
             world_settings=self.memory.get_world_settings_prompt(),
