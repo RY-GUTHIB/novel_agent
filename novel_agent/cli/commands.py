@@ -293,15 +293,29 @@ def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
     # ===== 生成前预检 =====
     # P0: 时空守卫 —— 检查时间线自洽 + 空间可达性
     spacetime_guard = SpacetimeGuard(memory, continuity)
-    spacetime_errors = spacetime_guard.pre_check(
+    result = spacetime_guard.pre_check(
         chapter=chapter, time_tag=time_tag, location=location,
         characters=characters,
     )
-    if spacetime_errors:
+
+    # 致命错误 → 拒绝生成
+    if result.fatal_errors:
         print("\n⛔ 时空守卫拒绝生成！请修复以下问题后重试：")
-        for err in spacetime_errors:
+        for err in result.fatal_errors:
             print(f"  ❌ {err}")
         return
+
+    # 空间不可达 → 自动补双向通道
+    if result.auto_fix_channels:
+        print("\n🔗 空间守卫发现通道缺失，自动修复：")
+        for ch in result.auto_fix_channels:
+            print(f"  ✅ 建立双向通道：「{ch.from_location}」↔「{ch.to_location}」")
+        spacetime_guard.auto_fix_spacemap(continuity, result.auto_fix_channels)
+
+    # 其他警告
+    if result.warnings:
+        for w in result.warnings:
+            print(f"  ⚠️ {w}")
 
     # P1: 逻辑约束引擎 —— 生成写作前约束文本
     logic_guard = LogicGuard(memory, continuity)

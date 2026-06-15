@@ -382,7 +382,7 @@ class WriterAgent:
         # 1. 应用所有设定（人物/物品/位置/势力/世界设定/场景事件）
         if settings_json:
             try:
-                parsed = self._safe_parse_json(settings_json)
+                parsed = json.loads(settings_json) if isinstance(settings_json, str) else settings_json
                 if parsed:
                     self._apply_all_settings(parsed, chapter)
             except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
