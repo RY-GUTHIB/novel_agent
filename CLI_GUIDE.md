@@ -108,6 +108,16 @@ python main.py new
 > ⚠️ 命令行模式会尝试读取 `.current_project` 文件来确定当前项目。
 > 如果文件不存在或损坏，会退回交互式选择。
 
+### 批量写作
+
+```bash
+# 连续写第 21 到 25 章
+python batch_write.py 21 25
+
+# 跳过已生成的章节续写
+python batch_write.py 1 30 --resume
+```
+
 ---
 
 ## 三、核心工作流

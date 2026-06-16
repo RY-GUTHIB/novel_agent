@@ -88,6 +88,10 @@ def create_new_project() -> str:
     set_current_project(name)
 
     print(f"\n✅ 项目「{name}」已创建！")
+
+    # 创建项目 MEMORY.md
+    config.set_project(name)
+    _create_project_memory(name)
     print(f"   类型：{novel_type} | 风格：{style}")
     print(f"   目录：{project_dir}")
 
@@ -494,8 +498,9 @@ def cmd_viz(memory, continuity, foreshadow, project_name):
 
 def cmd_status(memory, continuity, foreshadow, project_name):
     cfg = load_project_config(project_name)
-    print(f"\n=== 《{project_name}》创作进度 ===")
-    print(f"类型：{cfg.get('type', '未知')} | 风格：{cfg.get('style', '未知')}")
+    novel_title = _get_novel_title()
+    print(f"\n=== 《{novel_title or project_name}》创作进度 ===")
+    print(f"项目名：{project_name} | 类型：{cfg.get('type', '未知')} | 风格：{cfg.get('style', '未知')}")
     if cfg.get("concept"):
         print(f"构思：{cfg['concept'][:80]}...")
 
@@ -503,8 +508,9 @@ def cmd_status(memory, continuity, foreshadow, project_name):
     if outline_path.exists():
         with open(outline_path, "r", encoding="utf-8") as f:
             outline = json.load(f)
-        print(f"\n标题：{outline.get('title', '未知')}")
-        print(f"规划章节：{len(outline.get('chapter_plan', []))} 章")
+        print(f"\n大纲标题：{outline.get('title', '未知')}")
+        chapter_plan = _get_chapter_plan(outline)
+        print(f"规划章节：{len(chapter_plan)} 章")
     else:
         print("\n⚠️  未找到大纲（请先运行 python main.py new）")
 
@@ -713,9 +719,26 @@ def update_project_memory(project_name: str, memory: MemoryManager,
 
     mem_path = config.PROJECTS_ROOT / project_name / "MEMORY.md"
     if not mem_path.exists():
-        return
+        # 不存在则从模板创建
+        _create_project_memory(project_name)
+        if not mem_path.exists():
+            return
 
     content = mem_path.read_text(encoding="utf-8")
+
+    # 更新小说标题
+    novel_title = _get_novel_title()
+    if novel_title:
+        content = re.sub(
+            r"^# MEMORY\.md - 《.+》",
+            f"# MEMORY.md - 《{novel_title}》",
+            content,
+        )
+        content = re.sub(
+            r"\| 小说标题 \| .+ \|",
+            f"| 小说标题 | {novel_title} |",
+            content,
+        )
 
     # 更新最后更新时间
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -745,3 +768,77 @@ def update_project_memory(project_name: str, memory: MemoryManager,
         content = re.sub(stats_pattern, r"\1" + stats_table, content)
 
     mem_path.write_text(content, encoding="utf-8")
+
+
+def _create_project_memory(project_name: str):
+    """为项目创建初始 MEMORY.md 模板"""
+    from datetime import datetime
+
+    mem_path = config.PROJECTS_ROOT / project_name / "MEMORY.md"
+    if mem_path.exists():
+        return
+
+    novel_title = _get_novel_title()
+    cfg = load_project_config(project_name)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    template = f"""# MEMORY.md - 《{novel_title or project_name}》
+
+> 最后更新：{now}（自动更新）
+
+---
+
+## 基本信息
+
+| 项目 | 内容 |
+|---|---|
+| 项目名 | {project_name} |
+| 小说标题 | {novel_title or '（未生成大纲）'} |
+| 类型 | {cfg.get('type', '未知')} |
+| 风格 | {cfg.get('style', '未知')} |
+| 构思 | {cfg.get('concept', '')[:100]} |
+
+---
+
+## 剧情梗概
+
+（待大纲生成后填写）
+
+---
+
+## 核心人物
+
+（待写作后自动填充）
+
+---
+
+## 数据统计
+
+| 数据 | 数量 |
+|---|---|
+| 人物 | 0 |
+| 世界设定 | 0 |
+| 地点 | 0 |
+| 伏笔 | 0（已兑现 0） |
+| 时间线事件 | 0 |
+| 已写章节 | 0 |
+
+---
+
+## 下一步
+
+- 运行 `python main.py new` 生成大纲
+- 运行 `python main.py write` 开始写作
+"""
+    mem_path.write_text(template, encoding="utf-8")
+    print(f"  📄 已创建项目记忆文件：{mem_path}")
+
+
+def _get_novel_title() -> str:
+    """从 outline.json 读取小说标题"""
+    outline_path = Path(config.DATA_DIR) / "outline.json"
+    if outline_path.exists():
+        with open(outline_path, "r", encoding="utf-8") as f:
+            outline = json.load(f)
+        return outline.get("title", "")
+    return ""
