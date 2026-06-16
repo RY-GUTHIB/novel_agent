@@ -35,7 +35,8 @@ class ReviewerAgent:
 
     def review_chapter(self, chapter: int, title: str, content: str,
                         temperature: float = 0.3,
-                        logic_constraints: str = "") -> Dict:
+                        logic_constraints: str = "",
+                        characters: list = None) -> Dict:
         # 构建空间位置上下文
         spatial_lines = []
         all_chars = set(cl.character for cl in self.continuity.character_locations)
@@ -47,6 +48,9 @@ class ReviewerAgent:
                 last_rec = sorted(char_recs, key=lambda x: (x.chapter, x.scene or ''))[-1] if char_recs else None
                 note = f"（{last_rec.note}）" if last_rec and last_rec.note else ""
                 spatial_lines.append(f"  {char}：{last_loc}{note}")
+
+        # 构建状态快照
+        state_snapshot = self.memory.build_state_snapshot(chapter, characters or [])
 
         user_prompt = REVIEWER_USER_PROMPT.format(
             chapter=chapter, title=title, content=content,
@@ -65,6 +69,7 @@ class ReviewerAgent:
             foreshadow_summary=self.foreshadow.summarize(),
             style_prompt=self.memory.get_style_prompt(),
             logic_constraints=logic_constraints or "（无特殊逻辑约束）",
+            state_snapshot=state_snapshot,
         )
 
         response = generate(
@@ -94,6 +99,7 @@ class ReviewerAgent:
                     "emotion": "情绪价值", "comparison": "实力对比逻辑", "recall": "前文回忆真实性",
                     "time": "时间一致性",
                     "style_consistency": "风格一致性",
+                    "fact_check": "事实一致性",
                 }
                 for key, cn_name in field_map.items():
                     if key in parsed:

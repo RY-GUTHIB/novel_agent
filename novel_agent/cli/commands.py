@@ -378,7 +378,8 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
     no_improvement_count = 0
     for rev in range(max_revisions + 1):
         report = reviewer.review_chapter(chapter, title, content,
-                                          logic_constraints=logic_constraints)
+                                          logic_constraints=logic_constraints,
+                                          characters=characters)
         print(f"\n📋 审校报告（第{rev+1}次）：")
         print(report["raw_text"][:2000])
         print(f"\n结论：{report['verdict']} | 总分：{report['overall_score']}")
@@ -447,7 +448,8 @@ def cmd_review(memory, continuity, foreshadow, project_name):
 
     reviewer = ReviewerAgent(memory, continuity, foreshadow)
     try:
-        report = reviewer.review_chapter(chapter_num, title, content)
+        report = reviewer.review_chapter(chapter_num, title, content,
+                                          characters=ch_data.get("characters", []) if ch_data else [])
         print(report["raw_text"])
         reviewer.save_review_report(chapter_num, report)
         print(f"\n📁 审校报告：{config.OUTPUT_DIR}/review_chapter_{chapter_num:03d}.md")

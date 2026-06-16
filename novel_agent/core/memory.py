@@ -533,23 +533,65 @@ class MemoryManager:
         })
         self._save_items()
 
-    def get_item_status_table(self) -> str:
-        """生成「物品状态追踪表」（方案1：每次生成前注入 prompt）"""
-        if not self.items:
-            return "（暂无关键物品记录）"
-        lines = ["【已出现的关键物品及其归属/状态（⚠️ 写作前必查，防止重复赠与）】"]
-        for name, item in self.items.items():
-            lines.append(
-                f"  - {name}（{item.type}）：第{item.first_appeared}章由「{item.first_giver}」"
-                f"给予「{item.current_holder}」，当前状态={item.status}"
-            )
-            if item.subsequent_transfers:
-                for t in item.subsequent_transfers:
-                    lines.append(f"    → 第{t['chapter']}章：{t['from']} → {t['to']}（{t['reason']}）")
-            if item.prohibited_actions:
-                lines.append(f"    ⛔ 禁止操作：{', '.join(item.prohibited_actions)}")
-        lines.append("⚠️ 以上物品已有归属，后文不得再次出现「他人将同一物品赠予/交给角色」的情节！")
-        return "\n".join(lines)
+    def build_state_snapshot(self, chapter: int, characters: list) -> str:
+        """构建「当前世界状态快照」——写作和审校前注入 prompt，防止事实矛盾。
+
+        提取：人物修为、身份、位置、物品归属、已揭示设定，生成精简文本。
+        """
+        parts = []
+
+        # 1. 人物修为 + 身份 + 位置
+        parts.append("## 📋 人物当前状态")
+        for name in characters:
+            if name not in self.characters:
+                continue
+            c = self.characters[name]
+            fields = [f"- **{name}**"]
+            if c.cultivation:
+                fields.append(f"修为={c.cultivation}")
+            if c.current_location:
+                fields.append(f"位置={c.current_location}")
+            # 从 relationships 提取关键身份信息（如"叶家家主"、"大长老"）
+            if c.relationships:
+                id_tags = []
+                for other, rel in c.relationships.items():
+                    if rel in ("家主", "族长", "大长老", "长老", "宗主", "掌门", "师父", "徒弟", "父亲", "母亲", "舅舅", "兄弟"):
+                        id_tags.append(f"{rel}({other})")
+                if id_tags:
+                    fields.append(f"关系身份={', '.join(id_tags)}")
+            if c.status and c.status != "alive":
+                fields.append(f"状态={c.status}")
+            parts.append("，".join(fields))
+
+        # 2. 物品归属（含后续转移记录和禁止操作）
+        parts.append("\n## 📦 关键物品归属（当前）")
+        if self.items:
+            for name, item in self.items.items():
+                parts.append(
+                    f"- {name}（{item.type}）：第{item.first_appeared}章由「{item.first_giver}」"
+                    f"给予「{item.current_holder}」，当前状态={item.status}"
+                )
+                if item.subsequent_transfers:
+                    for t in item.subsequent_transfers:
+                        parts.append(f"  → 第{t['chapter']}章：{t['from']} → {t['to']}（{t['reason']}）")
+                if item.prohibited_actions:
+                    parts.append(f"  ⛔ 禁止操作：{', '.join(item.prohibited_actions)}")
+            parts.append("⚠️ 以上物品已有归属，后文不得再次出现「他人将同一物品赠予/交给角色」的情节！")
+        else:
+            parts.append("（无）")
+
+        # 3. 已揭示的核心设定（最近5条，避免冗余）
+        parts.append("\n## 🌍 已揭示的世界设定摘要")
+        ws_keys = list(self.world_settings.keys())
+        recent_ws = ws_keys[-5:] if len(ws_keys) > 5 else ws_keys
+        for key in recent_ws:
+            if key in self.world_settings:
+                s = self.world_settings[key]
+                parts.append(f"- {key}：{s.value[:80]}")
+        if not recent_ws:
+            parts.append("（无）")
+
+        return "\n".join(parts)
 
     # ========== 风格锚点 ==========
 

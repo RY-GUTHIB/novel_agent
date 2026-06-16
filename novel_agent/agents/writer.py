@@ -122,7 +122,6 @@ class WriterAgent:
             character_knowledge_text=self.memory.get_character_knowledge_prompt(chapter=chapter),
         )
         rag_context = self._get_rag_context(chapter, title, summary, characters)
-        item_status_table = self.memory.get_item_status_table()
 
         # 设定提取上下文
         char_summary_text = self._build_char_summary(characters)
@@ -138,6 +137,9 @@ class WriterAgent:
         # 逻辑约束（来自 LogicGuard，纯规则）
         if not logic_constraints:
             logic_constraints = "（无特殊逻辑约束）"
+        
+        # 构建状态快照
+        state_snapshot = self.memory.build_state_snapshot(chapter, characters)
         
         return CHAPTER_WRITER_USER_PROMPT.format(
             chapter=chapter, title=title, summary=summary,
@@ -156,7 +158,7 @@ class WriterAgent:
             scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
             foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
             rag_context=rag_context,
-            item_status_table=item_status_table,
+            state_snapshot=state_snapshot,
             char_summary_text=char_summary_text,
             existing_ws_text=existing_ws_text,
             existing_loc_text=existing_loc_text,
@@ -290,6 +292,9 @@ class WriterAgent:
         if not logic_constraints:
             logic_constraints = "（无特殊逻辑约束）"
 
+        # 构建状态快照
+        state_snapshot = self.memory.build_state_snapshot(chapter, characters)
+
         return CHAPTER_REVISER_USER_PROMPT.format(
             chapter=chapter, title=title, review_report=review_report,
             original_content=original_content, summary=summary,
@@ -307,7 +312,7 @@ class WriterAgent:
             relationship_details=self.memory.get_all_relationships_prompt(),
             scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
             foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
-            item_status_table=self.memory.get_item_status_table(),
+            state_snapshot=state_snapshot,
         )
 
     def _get_rag_context(self, chapter, title, summary, characters) -> str:
