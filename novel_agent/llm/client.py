@@ -168,6 +168,14 @@ def generate(system_prompt: str, user_prompt: str,
             raise ValueError("未配置 CLAUDE_API_KEY")
         return _retry(_call_claude, system_prompt, user_prompt, temperature, max_tokens)
 
+    elif provider == "volcengine":
+        if not config.VOLCENGINE_API_KEY:
+            raise ValueError("未配置 VOLCENGINE_API_KEY，请在 config.py 或环境变量中设置")
+        return _retry(_call_openai_compatible,
+            config.VOLCENGINE_BASE_URL, config.VOLCENGINE_API_KEY, config.VOLCENGINE_MODEL,
+            system_prompt, user_prompt, temperature, max_tokens
+        )
+
     else:
         raise ValueError(f"不支持的 LLM_PROVIDER: {provider}，请在 config.py 中修改")
 
@@ -184,7 +192,7 @@ def generate_stream(system_prompt: str, user_prompt: str,
     if max_tokens is None:
         max_tokens = config.MAX_TOKENS
     provider = config.LLM_PROVIDER.lower()
-    if provider not in ("deepseek", "qwen", "ollama"):
+    if provider not in ("deepseek", "qwen", "ollama", "volcengine"):
         # 非流式降级为普通生成
         yield generate(system_prompt, user_prompt, temperature, max_tokens)
         return
@@ -200,6 +208,9 @@ def generate_stream(system_prompt: str, user_prompt: str,
     elif provider == "qwen":
         client = OpenAI(base_url=config.QWEN_BASE_URL, api_key=config.QWEN_API_KEY)
         model = config.QWEN_MODEL
+    elif provider == "volcengine":
+        client = OpenAI(base_url=config.VOLCENGINE_BASE_URL, api_key=config.VOLCENGINE_API_KEY)
+        model = config.VOLCENGINE_MODEL
     else:  # ollama
         client = OpenAI(base_url=config.OLLAMA_BASE_URL, api_key="ollama")
         model = config.OLLAMA_MODEL
