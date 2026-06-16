@@ -494,8 +494,7 @@ class WriterAgent:
 
     # ========== 输出解析 ==========
 
-    @staticmethod
-    def _split_output_and_settings(raw_output: str) -> tuple:
+    def _split_output_and_settings(self, raw_output: str) -> tuple:
         """从 LLM 输出中分离正文和设定 JSON，同时剥离自检段"""
         # 剥离 PRE_FLIGHT_CHECK 自检段（不写入最终文件）
         flight_marker = "===PRE_FLIGHT_CHECK==="
@@ -524,11 +523,33 @@ class WriterAgent:
                 print(f"  [合并解析] 正文 {len(content)} 字，设定 JSON 解析成功")
                 return content, settings_json
             else:
-                print(f"  [合并解析] 正文 {len(content)} 字，设定 JSON 解析失败，将 fallback")
+                # 解析失败时保存原始 settings_text 到文件，方便排查
+                self._save_failed_settings(settings_text)
+                print(f"  [合并解析] 正文 {len(content)} 字，设定 JSON 解析失败，已保存原始文本到 debug_settings.txt")
                 return content, None
         else:
             print(f"  [合并解析] 未找到分隔符，正文 {len(raw_output)} 字")
             return raw_output, None
+
+    @staticmethod
+    def _save_failed_settings(settings_text: str):
+        """保存解析失败的 SETTINGS_JSON 原始文本，方便排查问题"""
+        import config
+        from datetime import datetime
+        debug_path = Path(config.OUTPUT_DIR) / "debug_settings.txt"
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(debug_path, "w", encoding="utf-8") as f:
+            f.write(f"# 解析失败时间: {timestamp}\n")
+            f.write(f"# 原始文本长度: {len(settings_text)} 字符\n")
+            f.write(f"# 最后50字符: {settings_text[-50:]}\n")
+            f.write(f"# ---\n\n{settings_text}")
+        # 同时追加到日志
+        debug_log = Path(config.OUTPUT_DIR) / "debug_settings.log"
+        with open(debug_log, "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"[{timestamp}] 解析失败，长度={len(settings_text)}\n")
+            f.write(f"末尾50字符: {settings_text[-50:]}\n")
+            f.write(f"{'='*60}\n")
 
     def _apply_all_settings(self, parsed: dict, chapter: int):
         """统一回写所有设定（人物/物品/位置/势力/世界设定/场景事件/连续性）。
