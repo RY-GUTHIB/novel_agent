@@ -9,6 +9,7 @@ spacetime_guard.py - 时空守卫（生成前强制检查）
 2. 空间守卫：检查角色移动是否可达（通行时间 vs 章节时间间隔）
 """
 
+import re
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -68,8 +69,6 @@ class SpacetimeGuard:
             if v.severity == "fatal":
                 fatal_errors.append(f"[{v.type}] {v.message}")
             elif v.type == "space" and "空间不可达" in v.message:
-                # 从消息中提取 from/to 位置
-                import re
                 m = re.search(r"从「(.+?)」到「(.+?)」", v.message)
                 if m:
                     auto_fix_channels.append(AutoFixChannel(
@@ -172,7 +171,6 @@ class SpacetimeGuard:
         - "三日后" → 无法解析，返回 None
         - "第一章-春" → 无法解析，返回 None
         """
-        import re
         # 匹配 "第N日"
         m = re.match(r'第\s*(\d+)\s*日', time_tag)
         if m:
@@ -244,7 +242,6 @@ class SpacetimeGuard:
 
     def _parse_travel_days(self, travel_time: str) -> Optional[int]:
         """解析通行时间字符串为天数"""
-        import re
         travel_time = travel_time.strip()
         # "2日" / "2天"
         m = re.match(r'(\d+)\s*[日天]', travel_time)
@@ -253,10 +250,10 @@ class SpacetimeGuard:
         # "半日"
         if '半日' in travel_time or '半天' in travel_time:
             return 1
-        # "1时辰" ≈ 2小时
+        # "1时辰" ≈ 2小时 ≈ 0.25日
         m = re.match(r'(\d+)\s*时辰', travel_time)
         if m:
-            return 1  # 保守估计，1时辰按1日算
+            return max(1, int(m.group(1)) // 4)  # 4时辰≈1日
         # "3日骑马" → 3
         m = re.match(r'(\d+)', travel_time)
         if m:
@@ -400,7 +397,6 @@ class SpacetimeGuard:
         """与 _parse_travel_days 相同的逻辑，静态版本供 auto_fix 使用。
         但"半日"返回 0.5 而非 1，以便更精确地估算平均通行时间。
         """
-        import re
         travel_time = travel_time.strip()
         m = re.match(r'(\d+)\s*[日天]', travel_time)
         if m:
@@ -416,11 +412,11 @@ class SpacetimeGuard:
         return None
 
     @staticmethod
-    def _format_travel_days(days: int) -> str:
+    def _format_travel_days(days: float) -> str:
         """将天数转为中文通行时间字符串"""
-        if days == 1:
+        if days <= 0.5:
             return "半日"
-        elif days == 2:
+        elif days <= 1:
             return "1日"
         else:
-            return f"{days - 1}日"
+            return f"{int(days)}日"

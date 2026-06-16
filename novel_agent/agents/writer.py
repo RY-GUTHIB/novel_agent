@@ -18,7 +18,7 @@ from novel_agent.llm.client import generate, parse_json, parse_json_array
 from novel_agent.core.models import (
     CharacterProfile, LocationProfile, WorldSetting,
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
-    ItemProfile,
+    ItemProfile, TaskProfile,
 )
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
@@ -107,6 +107,72 @@ class WriterAgent:
         self._post_write(chapter, title, content, summary, time_tag, location, characters,
                          settings_json=settings_json)
         return content, settings_json
+
+    def patch_chapter(self, chapter: int, title: str, original_content: str,
+                      patches: list, summary: str, characters: List[str]) -> str:
+        """定向修补：只修改问题段落，不重写整章。
+
+        patches: [{severity, description, location_keyword}, ...]
+        返回修补后的完整章节正文。
+        """
+        if not patches:
+            return original_content
+
+        # 按关键词定位问题段落
+        paragraphs = original_content.split("\n\n")
+        patch_tasks = []  # [(paragraph_idx, paragraph_text, patch_desc)]
+
+        for p in patches:
+            kw = p.get("location_keyword", "")
+            if not kw:
+                continue
+            # 找包含关键词的段落
+            for i, para in enumerate(paragraphs):
+                if kw in para:
+                    patch_tasks.append((i, para, p["description"]))
+                    break
+
+        if not patch_tasks:
+            logger.info("定向修补：未找到可定位的段落，回退整章重写")
+            return None  # 返回 None 表示失败，调用方应回退 revise_chapter
+
+        # 构建修补 prompt（轻量版）
+        patch_sections = []
+        for i, para, desc in patch_tasks:
+            # 取上下文：前1段 + 问题段 + 后1段
+            ctx_start = max(0, i - 1)
+            ctx_end = min(len(paragraphs), i + 2)
+            context = "\n\n".join(paragraphs[ctx_start:ctx_end])
+            patch_sections.append(
+                f"### 问题段落（含前后上下文）\n```\n{context}\n```\n"
+                f"### 修改要求\n{desc}\n"
+                f"### 请输出修改后的段落（仅输出修改后的段落文本，不要包含上下文）"
+            )
+
+        patch_prompt = "\n\n---\n\n".join(patch_sections)
+
+        system_prompt = (
+            "你是一位小说修订编辑。请根据修改要求，对每个问题段落进行定向修补。\n"
+            "只修改问题段落本身，保持前后文一致。只输出修改后的段落，用 --- 分隔。\n"
+            "不要输出任何解释，不要输出原文，只输出修改后的段落。"
+        )
+        user_prompt = (
+            f"第{chapter}章《{title}》定向修补\n\n"
+            f"本章大纲：{summary}\n"
+            f"出场人物：{'、'.join(characters)}\n\n"
+            f"{patch_prompt}"
+        )
+
+        raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
+                              temperature=0.2, max_tokens=2048)
+
+        # 解析修改后的段落并替换
+        revised_paras = [p.strip() for p in raw_output.split("---") if p.strip()]
+        for idx, (para_idx, _, _) in enumerate(patch_tasks):
+            if idx < len(revised_paras):
+                paragraphs[para_idx] = revised_paras[idx]
+
+        return "\n\n".join(paragraphs)
 
     # ========== Prompt 构建 ==========
 
@@ -480,6 +546,7 @@ class WriterAgent:
             self._apply_sect_factions(parsed.get("sect_factions", []), chapter)
             self._apply_scene_events(parsed.get("scene_events", []), chapter)
             self._apply_items(parsed.get("items", []), chapter)
+            self._apply_tasks(parsed.get("tasks", []), chapter)
             self._apply_style(parsed.get("style", {}))
         except (KeyError, ValueError, TypeError, AttributeError) as e:
             print(f"  [WARN] 设定回写失败: {e}")
@@ -493,10 +560,9 @@ class WriterAgent:
         """
         results = []
         # 提取 [FS: xxx] 标记，要求内容至少 2 个中文字符（允许短伏笔如"破局"）
-        # 使用普通字符串（非 raw），避免 Python 3.12+ 的无效转义警告
-        results.extend(re.findall('\\[FS:\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{1,}?)\\s*\\]', content))
-        results.extend(re.findall('FS：\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{1,}?)(?:\\r?\\n|$)', content))
-        results.extend(re.findall('\\[FS：\\s*([\\u4e00-\\u9fa5][\\u4e00-\\u9fa5\\s，。！？、；：""''（）…—0-9-]{1,}?)\\s*\\]', content))
+        results.extend(re.findall(r'\[FS:\s*([\u4e00-\u9fa5][\u4e00-\u9fa5\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]', content))
+        results.extend(re.findall(r'FS：\s*([\u4e00-\u9fa5][\u4e00-\u9fa5\s，。！？、；：""''（）…—0-9-]{1,}?)(?:\r?\n|$)', content))
+        results.extend(re.findall(r'\[FS：\s*([\u4e00-\u9fa5][\u4e00-\u9fa5\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]', content))
         return list(set(results))
 
     # ========== 设定提取（已合并到写作 prompt 的 ===SETTINGS_JSON=== 输出，以下方法已废弃）==========
@@ -809,6 +875,48 @@ class WriterAgent:
             if updated_count:
                 parts.append(f"更新 {updated_count} 个物品")
             print(f"  [设定提取·物品] {', '.join(parts)}")
+
+    def _apply_tasks(self, tasks: list, chapter: int):
+        """应用任务更新（从 SETTINGS_JSON 解析任务变化）"""
+        new_count = updated_count = 0
+        for t in tasks:
+            if not isinstance(t, dict):
+                continue
+            task_id = t.get("id", "").strip()
+            if not task_id:
+                continue
+            if task_id not in self.memory.tasks:
+                # 新任务：按 task_id 是否存在判断，不依赖 is_new 字段
+                self.memory.add_task(TaskProfile(
+                    id=task_id,
+                    name=t.get("name", ""),
+                    description=t.get("description", ""),
+                    status=t.get("status", "active"),
+                    chapter_created=chapter,
+                    chapter_completed=None,
+                    progress=t.get("progress", ""),
+                    related_items=t.get("related_items", []),
+                    related_characters=t.get("related_characters", []),
+                ))
+                new_count += 1
+            elif task_id in self.memory.tasks:
+                existing = self.memory.tasks[task_id]
+                updates = t.get("updates", {})
+                prog = updates.get("progress", "")
+                if prog:
+                    self.memory.update_task_progress(task_id, prog)
+                if updates.get("status") == "completed":
+                    self.memory.complete_task(task_id, chapter)
+                updated_count += 1
+
+        if new_count or updated_count:
+            self.memory._save_tasks()
+            parts = []
+            if new_count:
+                parts.append(f"新增 {new_count} 个任务")
+            if updated_count:
+                parts.append(f"更新 {updated_count} 个任务")
+            print(f"  [设定提取·任务] {', '.join(parts)}")
 
     # ========== JSON 解析工具 ==========
 

@@ -6,6 +6,7 @@ commands.py - CLI 命令实现
 
 import glob
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -338,6 +339,7 @@ def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
 
         update_project_progress(project_name, chapters_written=chapter)
         rebuild_novel_md(config.OUTPUT_DIR)
+        update_project_memory(project_name, memory, continuity, foreshadow)
 
         print(f"\n✅ 第 {chapter} 章完成！")
         print(f"  字数：约 {len(content)} 字")
@@ -354,7 +356,7 @@ def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
         print(f"\n--- 正文预览（前300字）---\n{content[:300]}\n...")
 
         next_ch = chapter + 1
-        if next_ch <= len(chapter_plan):
+        if next_ch < len(chapter_plan):
             print(f"\n💡 下一步：python main.py write  # 生成第{next_ch}章")
         else:
             print("\n💡 大纲章节已全部生成！")
@@ -403,6 +405,24 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
             break
 
         print(f"\n🔧 根据审校意见自动修改（第{rev+1}次修订）...")
+        
+        # 优先尝试定向修补（省 token）
+        if report.get("patches"):
+            print(f"  🎯 定向修补模式：发现 {len(report['patches'])} 个可定位问题")
+            patched = writer.patch_chapter(
+                chapter=chapter, title=title, original_content=content,
+                patches=report["patches"], summary=summary, characters=characters,
+            )
+            if patched:
+                content = patched
+                settings_json = None  # 定向修补不产生新设定
+                writer.save_chapter(chapter, title, content)
+                print("  定向修补完成，重新审校...")
+                prev_score = report["overall_score"]
+                continue
+            else:
+                print("  ⚠️ 定向修补失败，回退整章重写")
+
         content, settings_json = writer.revise_chapter(
             chapter=chapter, title=title, original_content=content,
             review_report=report["raw_text"], summary=summary,
@@ -683,3 +703,45 @@ def rebuild_novel_md(output_dir: str = None):
                 f.write(cf.read())
             f.write("\n\n")
     print(f"  🔄 novel.md 已重新生成（{len(files)} 章）")
+
+
+def update_project_memory(project_name: str, memory: MemoryManager,
+                          continuity: ContinuityGuard,
+                          foreshadow: ForeshadowTracker):
+    """自动更新 projects/<项目名>/MEMORY.md 的数据统计部分"""
+    from datetime import datetime
+
+    mem_path = config.PROJECTS_ROOT / project_name / "MEMORY.md"
+    if not mem_path.exists():
+        return
+
+    content = mem_path.read_text(encoding="utf-8")
+
+    # 更新最后更新时间
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    content = re.sub(
+        r"> 最后更新：.*",
+        f"> 最后更新：{now}（自动更新）",
+        content,
+    )
+
+    # 更新数据统计
+    chapters_dir = Path(config.OUTPUT_DIR) / "chapters"
+    written = len(glob.glob(str(chapters_dir / "chapter_*.md"))) if chapters_dir.exists() else 0
+    resolved = len([fs for fs in foreshadow.foreshadows if fs.status == "resolved"])
+
+    stats_table = f"""| 数据 | 数量 |
+|---|---|
+| 人物 | {len(memory.characters)} |
+| 世界设定 | {len(memory.world_settings)} |
+| 地点 | {len(memory.locations)} |
+| 伏笔 | {len(foreshadow.foreshadows)}（已兑现 {resolved}） |
+| 时间线事件 | {len(continuity.timeline)} |
+| 已写章节 | {written} |"""
+
+    # 匹配并替换 "## 数据统计" 下面的表格
+    stats_pattern = r"(## 数据统计\n\n)\|.*?\|.*?\|[\s\S]*?(?=\n\n##|\n\n---|\Z)"
+    if re.search(stats_pattern, content):
+        content = re.sub(stats_pattern, r"\1" + stats_table, content)
+
+    mem_path.write_text(content, encoding="utf-8")

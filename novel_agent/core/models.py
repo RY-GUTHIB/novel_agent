@@ -165,6 +165,19 @@ class CharacterLocation:
     scene: str = ""
     note: str = ""
 
+@dataclass
+class TaskProfile:
+    """任务清单（长线任务/目标追踪，跨章节记忆）"""
+    id: str
+    name: str                         # 任务名，如"救叶无痕"
+    description: str = ""             # 任务描述，如"需要集齐天外陨铁、九转还魂丹"
+    status: str = "active"            # active / completed / abandoned
+    chapter_created: int = 1
+    chapter_completed: Optional[int] = None
+    progress: str = ""                # 当前进度，如"已找到天外陨铁，还差九转还魂丹"
+    related_items: List[str] = field(default_factory=list)
+    related_characters: List[str] = field(default_factory=list)
+
 
 # ============ 伏笔相关 ============
 

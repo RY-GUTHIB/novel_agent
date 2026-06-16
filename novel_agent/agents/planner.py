@@ -201,27 +201,29 @@ class PlannerAgent:
         # 如果预埋伏笔超过30条，只保留每卷前5条（控制预埋量）
         total_fs = len(self.foreshadow.foreshadows)
         if total_fs > 30:
-            # 按章节分组，每卷只保留前5条
+            # 按章节分组
             by_chapter = {}
             for fs in self.foreshadow.foreshadows:
                 ch = fs.chapter_planted
                 if ch not in by_chapter:
                     by_chapter[ch] = []
                 by_chapter[ch].append(fs)
-            # 按卷分组（假设每卷10-15章），取每卷前5条伏笔
+
+            # 按卷分组（使用 volumes 的章节范围）
             kept = []
-            all_chs = sorted(by_chapter.keys())
-            vol_start = 0
-            for vol_idx in range(0, len(all_chs), 15):
-                vol_chs = all_chs[vol_idx:vol_idx + 15]
-                kept.extend(by_chapter[ch][0] for ch in vol_chs if by_chapter[ch])
-                # 如果本卷超过5条，只保留前5条
-                vol_fs = [fs for ch in vol_chs for fs in by_chapter[ch]]
-                if len(vol_fs) > 5:
-                    kept_for_vol = vol_fs[:5]
-                else:
-                    kept_for_vol = vol_fs
-                kept.extend(kept_for_vol)
+            volumes = outline.get("volumes", [])
+            if volumes:
+                for vol in volumes:
+                    vol_chs = [c["chapter"] for c in vol.get("chapter_plan", []) if c.get("chapter") in by_chapter]
+                    vol_fs = [fs for ch in vol_chs for fs in by_chapter[ch]]
+                    kept_for_vol = vol_fs[:5]  # 每卷保留前5条
+                    kept.extend(kept_for_vol)
+            else:
+                # 无 volumes 信息，按章节顺序取前5条
+                all_chs = sorted(by_chapter.keys())
+                vol_fs = [fs for ch in all_chs for fs in by_chapter[ch]]
+                kept = vol_fs[:5]
+
             # 去重
             seen = set()
             final = []

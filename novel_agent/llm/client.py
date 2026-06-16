@@ -39,6 +39,21 @@ def _retry(fn, *args, max_retries=MAX_RETRIES, **kwargs):
     raise last_exc
 
 
+# OpenAI 客户端缓存（按 base_url 复用，避免重复创建）
+_client_cache: dict = {}
+
+def _get_client(base_url: str, api_key: str):
+    """获取或创建缓存的 OpenAI 客户端"""
+    cache_key = f"{base_url}:{api_key[:8]}"
+    if cache_key not in _client_cache:
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("请先安装 openai: pip install openai>=1.0.0")
+        _client_cache[cache_key] = OpenAI(base_url=base_url, api_key=api_key)
+    return _client_cache[cache_key]
+
+
 def _call_openai_compatible(base_url: str, api_key: str, model: str,
                               system_prompt: str, user_prompt: str,
                               temperature: float = None,
@@ -48,12 +63,8 @@ def _call_openai_compatible(base_url: str, api_key: str, model: str,
         temperature = config.TEMPERATURE
     if max_tokens is None:
         max_tokens = config.MAX_TOKENS
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise ImportError("请先安装 openai: pip install openai>=1.0.0")
 
-    client = OpenAI(base_url=base_url, api_key=api_key)
+    client = _get_client(base_url, api_key)
     response = client.chat.completions.create(
         model=model,
         messages=[

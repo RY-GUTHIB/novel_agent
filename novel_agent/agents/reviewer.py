@@ -119,20 +119,33 @@ class ReviewerAgent:
 
         # 提取问题
         issues = []
-        for severity, desc in re.findall(r'⚠️\s*\[?严重性\s*[：:]\s*(\S+?)\]?\s*(.*?)(?=\n|$)', text, re.MULTILINE):
-            issues.append({"severity": severity, "description": desc.strip()})
+        patches = []  # 定向修补用：{severity, description, location_keyword}
+        # 匹配严重性标签：⚠️ [严重性：高] 或 ⚠️ 严重性：中
+        for severity, desc in re.findall(r'⚠️\s*\[?严重性\s*[：:]\s*(\S+?)\]?\s*\n?(.*?)(?=\n⚠️|\n\n|$)', text, re.MULTILINE | re.DOTALL):
+            desc_clean = desc.strip()
+            issues.append({"severity": severity, "description": desc_clean})
+            # 提取定位关键词
+            kw_match = re.search(r'定位[：:]\s*关键词[「"](.+?)[」"]', desc_clean)
+            if kw_match:
+                patches.append({
+                    "severity": severity,
+                    "description": desc_clean,
+                    "location_keyword": kw_match.group(1),
+                })
         if not issues:
             for line in text.split("\n"):
                 if "⚠️" in line or "警告" in line or "问题" in line:
                     issues.append({"severity": "中", "description": line.strip()})
 
-        # 结论：优先以 JSON 中的 verdict 为准，不要被正文中的"通过"误导
-        if not verdict or verdict == "需修改":
-            # 如果没有 JSON verdict，回退到正文判断
-            if "通过" in text and "不通过" not in text and "需修改" not in text:
+        # 结论：优先以 JSON 中的 verdict 为准
+        # JSON 未解析到 verdict 时，回退到正文关键词判断
+        if not verdict:
+            if "通过" in text and "不通过" not in text:
                 verdict = "通过"
             elif "重写" in text or "需重写" in text:
                 verdict = "需重写"
+            else:
+                verdict = "需修改"
 
         if scores and not overall_score:
             overall_score = sum(scores.values()) // max(len(scores), 1)
@@ -142,6 +155,7 @@ class ReviewerAgent:
             "scores": scores,
             "overall_score": overall_score,
             "issues": issues,
+            "patches": patches,
             "verdict": verdict,
             "passed": verdict == "通过",
         }

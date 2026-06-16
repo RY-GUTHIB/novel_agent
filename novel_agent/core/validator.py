@@ -62,7 +62,7 @@ class ContractValidator:
             if char.status == "dead":
                 # 检查是否在正文中出现（排除回忆/提及）
                 # 简单检查：名字出现在非引号上下文中且伴随动作词
-                action_pattern = rf'{re.escape(name)}(?:说|道|笑|怒|走|站|坐|飞|拔|挥|喝|笑|冷|热|点头|摇头)'
+                action_pattern = rf'{re.escape(name)}(?:说|道|笑|怒|走|站|坐|飞|拔|挥|喝|冷|热|点头|摇头)'
                 matches = re.findall(action_pattern, content)
                 if matches:
                     violations.append(ContractViolation(

@@ -1,6 +1,6 @@
 # CLI_GUIDE.md - novel_agent 启动与常用指令速查
 
-> 最后更新：2026-06-15
+> 最后更新：2026-06-16
 > 本文档专注「怎么启动」和「命令怎么用」，不重复 MEMORY.md 里的项目背景。
 
 ---
@@ -40,10 +40,15 @@ C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\pip.exe install -r r
 
 ### API Key
 
-在 `config.py` 第 49 行确认：
+在 `config.py` 中确认对应后端的 API Key 已配置（当前默认后端为 `volcengine`，见 `LLM_PROVIDER` 字段）：
+
 ```python
-DEEPSEEK_API_KEY = "sk-..."  # 已配置则无需修改
+# config.py 中对应后端的 API Key
+VOLCENGINE_API_KEY = "ark-..."   # 默认后端（火山引擎）
+DEEPSEEK_API_KEY = "sk-..."     # 备用后端（DeepSeek）
 ```
+
+如果切换了 `LLM_PROVIDER`，需确保对应后端的 Key 已填写。
 
 ---
 
@@ -57,7 +62,7 @@ cd E:\WorkBuddy\novel_agent
 ```
 
 启动后：
-1. 选择项目（输入编号，如 `2` 选《苍穹独狼》）
+1. 选择项目（输入编号）
 2. 进入命令循环，输入以下命令：
 
 | 命令 | 说明 |
@@ -128,7 +133,7 @@ fs-map              → 生成伏笔总览（Markdown）
 
 生成后文件在：
 ```
-E:\WorkBuddy\novel_agent\projects\苍穹独狼\output\
+E:\WorkBuddy\novel_agent\projects\<项目名>\output\
 ├── timeline.html        # 时间线可视化
 ├── character_map.html   # 人物关系图
 ├── world_map.html       # 世界地图
@@ -147,7 +152,7 @@ E:\WorkBuddy\novel_agent\projects\苍穹独狼\output\
 
 **解决：** 在本地 Windows 直接运行（不在 WorkBuddy 沙箱内），或手动创建 `.current_project` 文件：
 ```bash
-echo 苍穹独狼 > E:\WorkBuddy\novel_agent\projects\.current_project
+echo <项目名> > E:\WorkBuddy\novel_agent\projects\.current_project
 ```
 
 ### Q: `python` 命令找不到 / 用了错误版本
@@ -166,7 +171,7 @@ C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\python.exe
 
 **方法：** 删除该章节文件，再 `write --ch N`：
 ```bash
-del E:\WorkBuddy\novel_agent\projects\苍穹独狼\output\chapters\chapter_022.md
+del E:\WorkBuddy\novel_agent\projects\<项目名>\output\chapters\chapter_022.md
 python main.py write --ch 22
 ```
 
@@ -179,13 +184,13 @@ python main.py write --ch 22
 
 ## 五、项目状态快照（2026-06-15）
 
-| 项目 | 《苍穹独狼》 |
+| 项目 | 《<项目名>》 |
 |------|-------------|
-| 已完成 | 第 1-21 章 |
-| 下一章 | 第 22 章（卷3《剑指苍穹》） |
-| 总大纲 | 4卷40章 |
-| 伏笔 | 156 条（待回收） |
-| 人物 | 35 人 |
+| 已完成 | 第 1-X 章 |
+| 下一章 | 第 N 章 |
+| 总大纲 | （依项目而定） |
+| 伏笔 | （依项目而定） |
+| 人物 | （依项目而定） |
 
 ---
 
@@ -197,7 +202,7 @@ python main.py write --ch 22
 ```bat
 @echo off
 cd /d E:\WorkBuddy\novel_agent
-set PY=E:\WorkBuddy\novel_agent\venv\Scripts\python.exe
+set PY=C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\python.exe
 %PY% main.py write
 %PY% main.py review
 %PY% main.py viz

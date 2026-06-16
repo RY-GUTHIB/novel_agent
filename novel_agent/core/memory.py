@@ -9,11 +9,11 @@ import json
 import dataclasses
 import config
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 from .models import (
     CharacterProfile, LocationProfile, WorldSetting,
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
-    ItemProfile, StyleProfile,
+    ItemProfile, StyleProfile, TaskProfile,
 )
 
 
@@ -31,6 +31,7 @@ class MemoryManager:
         self.scene_events: List[SceneEvent] = []
         self.items: Dict[str, ItemProfile] = {}
         self.style: StyleProfile = StyleProfile()  # 风格锚点（单例，全书一套）
+        self.tasks: Dict[str, TaskProfile] = {}
         self._load_all()
 
     # ========== JSON 工具 ==========
@@ -59,6 +60,7 @@ class MemoryManager:
         self._load_scene_events()
         self._load_items()
         self._load_style()
+        self._load_tasks()
 
     def save_all(self):
         self._save_characters()
@@ -68,6 +70,9 @@ class MemoryManager:
         self._save_character_knowledge()
         self._save_sect_factions()
         self._save_scene_events()
+        self._save_items()
+        self._save_style()
+        self._save_tasks()
 
     # ========== 人物 ==========
 
@@ -507,8 +512,8 @@ class MemoryManager:
             self.items[item.name] = item
             self._save_items()
 
-    def get_item(self, name: str) -> ItemProfile:
-        return self.items.get(name, ItemProfile(name=name))
+    def get_item(self, name: str) -> Optional[ItemProfile]:
+        return self.items.get(name)
 
     def update_item(self, name: str, **kwargs):
         """更新物品字段并持久化"""
@@ -592,16 +597,16 @@ class MemoryManager:
             parts.append("（无）")
 
         # 4. 承诺清单（未兑现的规则、物品禁止操作、时间死线）
-        parts.append("\n## ⚠️ 承诺清单（本章写作前必须逐条确认，违反任何一条即为bug）")
         has_commitments = False
+        commitment_parts = []
 
         # 4a. 未兑现的剧情规则（出场人物声明的规则）
         active_rules = [r for r in self.plot_rules.values() if not r.overridden]
         if active_rules:
-            parts.append("\n🔴 剧情规则：")
+            commitment_parts.append("\n🔴 剧情规则：")
             for r in active_rules:
-                parts.append(f"  - 第{r.chapter_introduced}章「{r.rule_text[:60]}」")
-                parts.append(f"    → IF {r.condition} THEN {r.consequence}")
+                commitment_parts.append(f"  - 第{r.chapter_introduced}章「{r.rule_text[:60]}」")
+                commitment_parts.append(f"    → IF {r.condition} THEN {r.consequence}")
             has_commitments = True
 
         # 4b. 物品禁止操作
@@ -611,8 +616,8 @@ class MemoryManager:
                 if item.prohibited_actions:
                     item_warnings.append(f"  - {name}：⛔ {', '.join(item.prohibited_actions)}")
             if item_warnings:
-                parts.append("\n🔴 物品禁止操作：")
-                parts.extend(item_warnings)
+                commitment_parts.append("\n🔴 物品禁止操作：")
+                commitment_parts.extend(item_warnings)
                 has_commitments = True
 
         # 4c. 时间死线（从 timeline 中提取包含"天后""之后""内"的时间约束）
@@ -627,13 +632,27 @@ class MemoryManager:
                 if any(kw in tt for kw in deadline_keywords) or any(kw in (e.event or "") for kw in deadline_keywords):
                     deadline_events.append(e)
             if deadline_events:
-                parts.append("\n🟡 时间死线：")
+                commitment_parts.append("\n🟡 时间死线：")
                 for e in deadline_events[-5:]:  # 最近5条
-                    parts.append(f"  - 第{e.chapter}章：{e.time_tag} — {e.event[:60]}")
+                    commitment_parts.append(f"  - 第{e.chapter}章：{e.time_tag} — {e.event[:60]}")
                 has_commitments = True
 
-        if not has_commitments:
-            parts.append("（无未兑现承诺）")
+        if has_commitments:
+            parts.append("\n## ⚠️ 承诺清单（本章写作前必须逐条确认，违反任何一条即为bug）")
+            parts.extend(commitment_parts)
+        else:
+            parts.append("\n## ⚠️ 承诺清单：（无未兑现承诺）")
+
+        # 5. 任务清单（活跃的长线任务/目标）
+        active_tasks = self.get_active_tasks(current_chapter=chapter, limit=5)
+        if active_tasks:
+            parts.append("\n## 🎯 任务清单（活跃，跨章节长线任务）")
+            for t in active_tasks:
+                parts.append(f"- [{t.status}] {t.name}：{t.description}")
+                if t.progress:
+                    parts.append(f"    当前进度：{t.progress}")
+        else:
+            parts.append("\n## 🎯 任务清单：（无活跃任务）")
 
         return "\n".join(parts)
 
@@ -680,6 +699,41 @@ class MemoryManager:
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+
+    # ========== 任务清单 ==========
+
+    def _save_tasks(self):
+        data = {k: dataclasses.asdict(v) for k, v in self.tasks.items()}
+        self._save_json("tasks.json", data)
+
+    def _load_tasks(self):
+        data = self._load_json("tasks.json")
+        valid_fields = {f.name for f in dataclasses.fields(TaskProfile)}
+        for tid, d in data.items():
+            filtered = {k: v for k, v in d.items() if k in valid_fields}
+            self.tasks[tid] = TaskProfile(**filtered)
+
+    def get_active_tasks(self, current_chapter: int = 99999, limit: int = 5) -> List[TaskProfile]:
+        """返回活跃任务（status=active 且 chapter_created <= current_chapter），按创建章节排序"""
+        active = [t for t in self.tasks.values()
+                  if t.status == "active" and t.chapter_created <= current_chapter]
+        active.sort(key=lambda t: t.chapter_created)
+        return active[:limit]
+
+    def add_task(self, task: TaskProfile):
+        self.tasks[task.id] = task
+        self._save_tasks()
+
+    def complete_task(self, task_id: str, chapter: int):
+        if task_id in self.tasks:
+            self.tasks[task_id].status = "completed"
+            self.tasks[task_id].chapter_completed = chapter
+            self._save_tasks()
+
+    def update_task_progress(self, task_id: str, progress: str):
+        if task_id in self.tasks:
+            self.tasks[task_id].progress = progress
+            self._save_tasks()
 
     def update_style(self, updates: dict):
         """从 SETTINGS_JSON 的 style 字段更新风格锚点"""
