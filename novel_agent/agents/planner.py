@@ -40,13 +40,20 @@ class PlannerAgent:
 【核心创意】{user_idea}
 
 特别注意：
-1. 这是超长篇小说（目标300章+），大纲先规划4卷，每卷10-15章，总共40-60章的框架
-2. 势力关系必须逻辑自洽：如果A势力是B的靠山，那A不能同时又帮B的敌人
-3. 主角成长要慢：每卷只突破1-2个境界，要有挫折、失败、领悟再突破的过程
-4. 结局不能自爆/同归于尽，主角要活着继续成长
-5. 每卷之间要有跨卷伏笔
+1. 这是超长篇小说（目标300章+），大纲先规划5卷，每卷15-20章，总共至少50章。逻辑递进合理即可，不需要强制写结局（后续可续写）。
+2. 前10章通过对话自然交代力量体系，不要旁白大段说明
+3. 势力关系必须满足传递性无冲突，每个势力输出 alliance_chain
+4. 主角成长要慢，每卷突破非强制要求，大境界突破占用一整卷核心事件
+5. 被压制后本卷内必须反杀，破而后立：3章内遇机缘→7章内完成
+6. 暂退需8章内重返清算
+7. 结局不能自爆/同归于尽，主角要活着继续成长
+8. 每卷至少1条跨卷伏笔（type: "cross_volume"），伏笔总量不超过30条
+9. 每卷必须有 arc 四节点（setback/insight/breakthrough/new_challenge）
+10. 所有关键人物必须有 first_appearance 和 exit_point
+11. 所有关键物品 giver 必须唯一，禁止同一物品多个赠与者
+12. 伏笔跨卷不超过2卷未回收
 
-请严格按照 JSON 格式输出。"""
+请严格按照 JSON 格式输出，不要加任何解释文字。"""
 
         base_user_prompt = user_prompt  # 保存原始 prompt，不累积追加
         max_retries = 2
@@ -117,31 +124,73 @@ class PlannerAgent:
             self.foreshadow.foreshadows.clear()
 
         self._init_world_settings(outline)
+        self._init_power_system(outline)
+        self._init_protector_network(outline)
         self._init_characters(outline)
         self._init_locations(outline)
         self._init_factions(outline)
+        self._init_key_items(outline)
         self._init_chapters(outline)
+
+        # 自检清单
+        self._run_self_check(outline)
 
         self.memory.save_all()
         self.continuity.save_all()
         self.foreshadow._save()
 
     def _init_world_settings(self, outline: Dict):
-        ws = outline.get("world_setting", {})
-        self.memory.add_world_setting(WorldSetting(key="世界观总览", value=ws.get("description", "")))
-        for i, rule in enumerate(ws.get("rules", []), 1):
-            self.memory.add_world_setting(WorldSetting(key=f"规则{i}", value=rule))
-        if ws.get("power_system"):
-            self.memory.add_world_setting(WorldSetting(key="力量体系", value=ws["power_system"]))
+        meta = outline.get("meta", {})
+        self.memory.add_world_setting(WorldSetting(key="世界观总览", value=meta.get("setting", "")))
+
+    def _init_power_system(self, outline: Dict):
+        power_system = outline.get("power_system", [])
+        if power_system:
+            levels_text = " → ".join(f"L{p['level']}.{p['name']}" for p in power_system)
+            self.memory.add_world_setting(WorldSetting(key="力量体系", value=levels_text))
+
+    def _init_protector_network(self, outline: Dict):
+        pn = outline.get("protector_network", {})
+        if pn.get("direct"):
+            d = pn["direct"]
+            self.memory.add_world_setting(WorldSetting(
+                key="保护者-直接", value=f"{d.get('name', '')}（境界层数:{d.get('level', '')}，首次出场:第{d.get('first_appearance_volume', '?')}卷）"
+            ))
+        if pn.get("indirect"):
+            ind = pn["indirect"]
+            self.memory.add_world_setting(WorldSetting(
+                key="保护者-间接", value=f"{ind.get('name', '')}（势力:{ind.get('faction', '')}，原因:{ind.get('reason', '')}，首次出场:第{ind.get('first_appearance_volume', '?')}卷）"
+            ))
+        if pn.get("boss_kryptonite"):
+            self.memory.add_world_setting(WorldSetting(key="Boss弱点线索", value=pn["boss_kryptonite"]))
 
     def _init_characters(self, outline: Dict):
         for c_data in outline.get("characters", []):
+            # 解析 first_appearance 中的数字
+            first_app = 1
+            fa_str = c_data.get("first_appearance", "第1章")
+            fa_match = re.search(r'(\d+)', fa_str)
+            if fa_match:
+                first_app = int(fa_match.group(1))
+
             self.memory.add_character(CharacterProfile(
-                name=c_data["name"], gender=c_data.get("gender", ""),
-                age=c_data.get("age", ""), appearance=c_data.get("appearance", ""),
-                personality=c_data.get("personality", ""), background=c_data.get("background", ""),
-                goals=c_data.get("goals", ""), speaking_style=c_data.get("speaking_style", ""),
-                abilities=c_data.get("abilities", []), relationships=c_data.get("relationships", {}),
+                name=c_data["name"],
+                gender=c_data.get("gender", ""),
+                age=c_data.get("age", ""),
+                appearance=c_data.get("appearance", ""),
+                personality=c_data.get("personality", ""),
+                background=c_data.get("background", ""),
+                goals=c_data.get("goals", ""),
+                speaking_style=c_data.get("speaking_style", ""),
+                abilities=c_data.get("abilities", []),
+                relationships=c_data.get("relationships", {}),
+                core_values=c_data.get("core_value", ""),
+                core_desire=c_data.get("core_desire", ""),
+                core_fear=c_data.get("core_fear", ""),
+                flaw=c_data.get("core_flaw", ""),
+                alignment=c_data.get("alignment", ""),
+                first_appeared=first_app,
+                arc=c_data.get("exit_point", ""),
             ))
 
     def _init_locations(self, outline: Dict):
@@ -154,34 +203,63 @@ class PlannerAgent:
             self.memory.add_location(profile)
 
     def _init_factions(self, outline: Dict):
-        ws = outline.get("world_setting", {})
-        for fac_data in ws.get("factions", []):
-            fac_info = f"{fac_data['name']}（{fac_data.get('type', '')}）：实力{fac_data.get('strength', '')}"
+        for fac_data in outline.get("factions", []):
+            fac_info = f"{fac_data['name']}（{fac_data.get('level', '')}）：首领 {fac_data.get('leader', '')}"
             if fac_data.get("allies"):
                 fac_info += f"；盟友：{', '.join(fac_data['allies'])}"
             if fac_data.get("enemies"):
                 fac_info += f"；敌对：{', '.join(fac_data['enemies'])}"
-            if fac_data.get("key_members"):
-                fac_info += f"；核心成员：{', '.join(fac_data['key_members'])}"
+            if fac_data.get("alliance_chain"):
+                fac_info += f"；庇护链：{' → '.join(fac_data['alliance_chain'])}"
             self.memory.add_world_setting(WorldSetting(key=f"势力-{fac_data['name']}", value=fac_info))
+
+    def _init_key_items(self, outline: Dict):
+        """写入大纲物品，校验 giver 唯一性"""
+        items = outline.get("key_items", [])
+        seen_givers = {}
+        deduped = []
+        for item in items:
+            name = item.get("item_name", "")
+            giver = item.get("giver", "")
+            if name and giver:
+                if name in seen_givers:
+                    if seen_givers[name] != giver:
+                        logger.warning(f"物品'{name}'重复赠与（giver={giver} vs {seen_givers[name]}），合并为最早giver")
+                        continue  # 跳过重复记录
+                else:
+                    seen_givers[name] = giver
+            deduped.append(item)
+
+        for item in deduped:
+            self.memory.add_world_setting(WorldSetting(
+                key=f"物品-{item.get('item_name', '')}",
+                value=f"首次出场:第{item.get('first_chapter', 0)}章，赠与者:{item.get('giver', '')}，接受者:{item.get('receiver', '')}，用途:{item.get('purpose', '')}"
+            ))
 
     def _init_chapters(self, outline: Dict):
         all_chapters = []
         volumes = outline.get("volumes", [])
         if volumes:
             for vol in volumes:
-                vol_info = (f"第{vol.get('volume', '?')}卷「{vol.get('title', '')}」："
-                           f"{vol.get('arc_summary', '')} | 修为范围：{vol.get('power_range', '')}")
+                vol_num = vol.get('volume', '?')
+                vol_title = vol.get('title', '')
+                arc = vol.get('arc', {})
+                arc_info = (f"第{vol_num}卷「{vol_title}」"
+                           f" | 挫折:{arc.get('setback_chapter', '?')}"
+                           f" 领悟:{arc.get('insight_chapter', '?')}"
+                           f" 突破:{arc.get('breakthrough_chapter', '?')}"
+                           f" 新挑战:{arc.get('new_challenge_chapter', '?')}")
                 self.memory.add_world_setting(WorldSetting(
-                    key=f"卷{vol.get('volume', '?')}-{vol.get('title', '')}", value=vol_info,
+                    key=f"卷{vol_num}-{vol_title}", value=arc_info,
                 ))
-                all_chapters.extend(vol.get("chapter_plan", []))
+                chapters = vol.get("chapters", [])
+                all_chapters.extend(chapters)
         else:
             all_chapters = outline.get("chapter_plan", [])
 
         for ch_data in all_chapters:
             chapter = ch_data.get("chapter", 1)
-            time_tag = ch_data.get("time_tag", f"第{chapter}章")
+            time_tag = ch_data.get("time", f"第{chapter}章")
             summary = ch_data.get("summary", "")
             location = ch_data.get("location", "")
             characters = ch_data.get("characters", [])
@@ -193,46 +271,262 @@ class PlannerAgent:
             for char in characters:
                 self.continuity.add_character_location(chapter=chapter, character=char, location=location)
 
-            for fs_content in ch_data.get("foreshadows", []):
-                if fs_content:
-                    self.foreshadow.plant(chapter=chapter, content=fs_content, type="mystery",
+            # 章节级伏笔（仅种植章有内容，普通章节留空）
+            for fs_entry in ch_data.get("foreshadows", []):
+                if isinstance(fs_entry, str) and fs_entry:
+                    self.foreshadow.plant(chapter=chapter, content=fs_entry, type="mystery",
                                           related_characters=characters, importance=3)
 
-        # 如果预埋伏笔超过30条，只保留每卷前5条（控制预埋量）
-        total_fs = len(self.foreshadow.foreshadows)
-        if total_fs > 30:
-            # 按章节分组
-            by_chapter = {}
-            for fs in self.foreshadow.foreshadows:
-                ch = fs.chapter_planted
-                if ch not in by_chapter:
-                    by_chapter[ch] = []
-                by_chapter[ch].append(fs)
+        # 处理顶层 foreshadows 数组（新格式：含 id/plant_chapter/harvest_chapter/type）
+        fs_list = outline.get("foreshadows", [])
+        if fs_list:
+            for fs_data in fs_list:
+                if isinstance(fs_data, dict) and fs_data.get("content"):
+                    fs = self.foreshadow.plant(
+                        chapter=fs_data.get("plant_chapter", 1),
+                        content=fs_data["content"],
+                        type=fs_data.get("type", "cross_volume"),
+                        related_characters=[],
+                        importance=3,
+                    )
+                    harvest_ch = fs_data.get("harvest_chapter")
+                    if harvest_ch:
+                        fs.chapter_resolved = harvest_ch
 
-            # 按卷分组（使用 volumes 的章节范围）
-            kept = []
-            volumes = outline.get("volumes", [])
-            if volumes:
+            # 伏笔总量 > 30 时自动精简：仅保留跨卷伏笔 + 最近 2 卷的当卷伏笔
+            total_fs = len(self.foreshadow.foreshadows)
+            if total_fs > 30:
+                vol_ranges = []
                 for vol in volumes:
-                    vol_chs = [c["chapter"] for c in vol.get("chapter_plan", []) if c.get("chapter") in by_chapter]
-                    vol_fs = [fs for ch in vol_chs for fs in by_chapter[ch]]
-                    kept_for_vol = vol_fs[:5]  # 每卷保留前5条
-                    kept.extend(kept_for_vol)
-            else:
-                # 无 volumes 信息，按章节顺序取前5条
-                all_chs = sorted(by_chapter.keys())
-                vol_fs = [fs for ch in all_chs for fs in by_chapter[ch]]
-                kept = vol_fs[:5]
+                    chs = vol.get("chapters", [])
+                    if chs:
+                        vol_ranges.append((chs[0]["chapter"], chs[-1]["chapter"]))
+                last_vol = vol_ranges[-1] if vol_ranges else (0, 9999)
+                second_last_vol = vol_ranges[-2] if len(vol_ranges) >= 2 else (0, 0)
 
-            # 去重
-            seen = set()
-            final = []
-            for fs in kept:
-                if fs.id not in seen:
-                    seen.add(fs.id)
-                    final.append(fs)
-            self.foreshadow.foreshadows = final
-            print(f"  📌 预埋伏笔从 {total_fs} 条精简至 {len(final)} 条（每卷保留≤5条）")
+                kept = []
+                for fs in self.foreshadow.foreshadows:
+                    ch = fs.chapter_planted
+                    harvest = fs.chapter_resolved
+                    is_cross = harvest and harvest > (last_vol[1] if last_vol else ch)
+                    is_recent = (second_last_vol[0] <= ch <= last_vol[1])
+                    if is_cross or is_recent:
+                        kept.append(fs)
+
+                seen = set()
+                final = []
+                for fs in kept:
+                    if fs.id not in seen:
+                        seen.add(fs.id)
+                        final.append(fs)
+                self.foreshadow.foreshadows = final
+                print(f"  📌 伏笔从 {total_fs} 条精简至 {len(final)} 条（仅保留跨卷+最近2卷）")
+
+    def _run_self_check(self, outline: Dict):
+        """生成完成后强制自检"""
+        issues = []
+        meta = outline.get("meta", {})
+        volumes = outline.get("volumes", [])
+
+        # 1. 总章数 ≥ 50（按实际章节计数，非 meta 声明）
+        all_vol_chs = []
+        for vol in outline.get("volumes", []):
+            all_vol_chs.extend(vol.get("chapters", []))
+        total_ch = len(all_vol_chs)
+        if total_ch < 50:
+            issues.append(f"实际总章数={total_ch}，未达 ≥50")
+
+        # 2. 每卷章节数 15-20
+        for vol in outline.get("volumes", []):
+            chs = vol.get("chapters", [])
+            if len(chs) < 15 or len(chs) > 20:
+                issues.append(f"第{vol.get('volume','?')}卷章节数={len(chs)}，不在15-20范围")
+
+        # 3. 每卷 arc 四节点均已分配
+        for vol in outline.get("volumes", []):
+            arc = vol.get("arc", {})
+            for key in ("setback_chapter", "insight_chapter", "breakthrough_chapter", "new_challenge_chapter"):
+                if not arc.get(key):
+                    issues.append(f"第{vol.get('volume','?')}卷缺少 arc.{key}")
+
+        # 4. 力量体系境界数 ≤ 10
+        ps = outline.get("power_system", [])
+        if len(ps) > 10:
+            issues.append(f"境界数={len(ps)}，超过10")
+
+        # 5. 保护者境界 ≥ 总境界数 - 2
+        pn = outline.get("protector_network", {})
+        if pn.get("direct") and ps:
+            protector_lv = pn["direct"].get("level", 0)
+            min_required = len(ps) - 2
+            if protector_lv < min_required:
+                issues.append(f"直接保护者境界={protector_lv}，不足{min_required}（总境界-2）")
+
+        # 6. 所有势力 alliance_chain 无冲突（简单检测：同一势力不应同时出现在盟友和敌对中）
+        factions = outline.get("factions", [])
+        for f in factions:
+            allies = set(f.get("allies", []))
+            enemies = set(f.get("enemies", []))
+            conflict = allies & enemies
+            if conflict:
+                issues.append(f"势力'{f.get('name','')}'的盟友和敌对列表冲突：{conflict}")
+
+        # 7. 所有关键人物有 exit_point
+        for c in outline.get("characters", []):
+            if not c.get("exit_point"):
+                issues.append(f"人物'{c.get('name','')}'缺少 exit_point")
+
+        # 8. 所有关键物品 giver 唯一
+        givers = {}
+        for item in outline.get("key_items", []):
+            name = item.get("item_name", "")
+            giver = item.get("giver", "")
+            if name and giver:
+                if name in givers and givers[name] != giver:
+                    issues.append(f"物品'{name}'重复赠与（{giver} vs {givers[name]}）")
+                givers[name] = giver
+
+        # 9. 伏笔总数 ≤ 30（检查精简后的实际存储，非原始 outline）
+        fs_count = len(self.foreshadow.foreshadows)
+        if fs_count > 30:
+            issues.append(f"伏笔总数={fs_count}，超过30")
+
+        # 10. 每卷至少1条跨卷伏笔
+        for i, vol in enumerate(outline.get("volumes", [])):
+            vol_chs = [c["chapter"] for c in vol.get("chapters", [])]
+            vol_last_ch = max(vol_chs) if vol_chs else 0
+            has_cross = any(
+                fs.get("type") == "cross_volume" and fs.get("plant_chapter", 0) in vol_chs
+                for fs in outline.get("foreshadows", [])
+            )
+            if not has_cross:
+                issues.append(f"第{i+1}卷缺少跨卷伏笔")
+
+        # 11. 伏笔跨卷不超过2卷未回收：第1卷伏笔必须在第3卷结束前回收
+        if len(volumes) >= 3:
+            vol1_chs = [c["chapter"] for c in volumes[0].get("chapters", [])]
+            vol3_last = max(c["chapter"] for c in volumes[2].get("chapters", [])) if volumes[2].get("chapters") else 0
+            for fs in outline.get("foreshadows", []):
+                if fs.get("plant_chapter", 0) in vol1_chs:
+                    if fs.get("harvest_chapter", 0) > vol3_last:
+                        issues.append(f"伏笔{fs.get('id','?')}（plant={fs.get('plant_chapter')}）在第3卷末（ch{vol3_last}）仍未回收，跨卷超过2卷")
+
+        # 12. 无自爆结局
+        last_vol = volumes[-1] if volumes else {}
+        last_chs = last_vol.get("chapters", [])
+        if last_chs:
+            last_summary = last_chs[-1].get("summary", "")
+            if any(kw in last_summary for kw in ("自爆", "同归于尽", "自爆身亡", "引爆")):
+                issues.append("结局疑似自爆/同归于尽")
+
+        # 13. 破而后立检测：真败关键词出现后，3章内必须遇到机缘，7章内完成破而后立（跨卷扫描）
+        true_defeat_kw = ("修为被废", "被废修为", "经脉尽断", "丹田破碎", "沦为废人", "功力全失")
+        chance_kw = ("机缘", "传承", "觉醒", "奇遇", "获得", "发现", "遇到", "传授", "认主")
+        recovery_kw = ("重修", "突破", "破而后立", "重塑", "涅槃", "浴火", "恢复修为", "突破至", "踏入")
+        # 合并所有卷的章节为全局有序列表，支持跨卷扫描
+        all_chapters_flat = []
+        for vol in volumes:
+            all_chapters_flat.extend(vol.get("chapters", []))
+        for i, ch in enumerate(all_chapters_flat):
+            summary = ch.get("summary", "")
+            for kw in true_defeat_kw:
+                if kw in summary:
+                    ch_num = ch.get("chapter", 0)
+                    # 检查后续3章内是否遇到机缘（跨卷）
+                    met_chance = False
+                    for j in range(i + 1, min(i + 4, len(all_chapters_flat))):
+                        next_summary = all_chapters_flat[j].get("summary", "")
+                        if any(ck in next_summary for ck in chance_kw):
+                            met_chance = True
+                            break
+                    # 检查后续7章内是否完成破而后立（跨卷）
+                    fully_recovered = False
+                    for j in range(i + 1, min(i + 8, len(all_chapters_flat))):
+                        next_summary = all_chapters_flat[j].get("summary", "")
+                        if any(rk in next_summary for rk in recovery_kw):
+                            fully_recovered = True
+                            break
+                    if not met_chance:
+                        issues.append(
+                            f"第{ch_num}章出现'{kw}'但后续3章内未遇到机缘（传承/觉醒/奇遇等）"
+                        )
+                    elif not fully_recovered:
+                        issues.append(
+                            f"第{ch_num}章出现'{kw}'，3章内遇到了机缘但7章内未完成破而后立"
+                        )
+
+        # 14. 每卷至少1次挫折（被压制）事件，且反杀在本卷内
+        for vol in volumes:
+            setback = vol.get("arc", {}).get("setback_chapter", 0)
+            if setback == 0:
+                issues.append(f"第{vol.get('volume','?')}卷无挫折（被压制）章节")
+            else:
+                # 检查反杀是否在本卷内：setback 之后、本卷结束前，应有 insight/breakthrough 或 new_challenge
+                arc = vol.get("arc", {})
+                insight = arc.get("insight_chapter", 0)
+                breakthrough = arc.get("breakthrough_chapter", 0)
+                new_challenge = arc.get("new_challenge_chapter", 0)
+                has_comeback = any(x > setback for x in (insight, breakthrough, new_challenge) if x > 0)
+                if not has_comeback:
+                    issues.append(f"第{vol.get('volume','?')}卷挫折章{setback}后本卷内无反杀节点")
+
+        # === 支线自检 ===
+        side_quests = outline.get("side_quests", [])
+        if side_quests:
+            # 15. 支线章节占比 20%-35%
+            total_chapters = meta.get("total_chapters", 0)
+            sq_chapters = sum(sq.get("end_chapter", sq.get("start_chapter", 0)) - sq.get("start_chapter", 0) + 1
+                             for sq in side_quests)
+            if total_chapters > 0:
+                sq_ratio = sq_chapters / total_chapters
+                if sq_ratio < 0.20:
+                    issues.append(f"支线占比={sq_ratio:.1%}，不足20%")
+                elif sq_ratio > 0.35:
+                    issues.append(f"支线占比={sq_ratio:.1%}，超过35%")
+
+            # 16. 每条支线结束后3章内，产出物被用于主线推进
+            for sq in side_quests:
+                end_ch = sq.get("end_chapter", 0)
+                connects = sq.get("connects_to_main", "")
+                if not connects:
+                    issues.append(f"支线{sq.get('id','?')}缺少 connects_to_main（如何接入主线）")
+                elif end_ch > 0 and "第" in connects:
+                    # 尝试提取 connects_to_main 中提到的章节号，验证是否在 end_ch+3 范围内
+                    conn_ch_match = re.search(r'第\s*(\d+)', connects)
+                    if conn_ch_match:
+                        conn_ch = int(conn_ch_match.group(1))
+                        if conn_ch > end_ch + 3:
+                            issues.append(f"支线{sq.get('id','?')}结束于第{end_ch}章，但 connects_to_main 提到第{conn_ch}章（超出3章窗口）")
+
+            # 17. 大型支线（>10章）之间间隔 ≥5章主线
+            large_sqs = [sq for sq in side_quests
+                        if sq.get("end_chapter", 0) - sq.get("start_chapter", 0) + 1 > 10]
+            large_sqs.sort(key=lambda x: x.get("start_chapter", 0))
+            for i in range(1, len(large_sqs)):
+                gap = large_sqs[i].get("start_chapter", 0) - large_sqs[i-1].get("end_chapter", 0) - 1
+                if gap < 5:
+                    issues.append(f"大型支线{large_sqs[i-1].get('id','?')}和{large_sqs[i].get('id','?')}之间仅隔{gap}章主线，需≥5章")
+
+            # 18. 所有支线产出物已写入对应模块（检查 output 字段完整性）
+            for sq in side_quests:
+                output = sq.get("output", {})
+                if not output.get("items") and not output.get("characters") and not output.get("rewards"):
+                    issues.append(f"支线{sq.get('id','?')}无任何产出物（items/characters/rewards均为空）")
+
+            # 19. 无支线脱离主线
+            for sq in side_quests:
+                connects = sq.get("connects_to_main", "")
+                summary = sq.get("summary", "")
+                main_hooks = ("为后续主线", "铺垫主线", "指向主线", "引出", "为卷末", "为下一阶段")
+                if not any(hook in connects or hook in summary for hook in main_hooks):
+                    issues.append(f"支线{sq.get('id','?')}疑似脱离主线（connects_to_main和summary中无主线关联词）")
+
+        if issues:
+            print("  ⚠️ 大纲自检发现问题：")
+            for issue in issues:
+                print(f"    - {issue}")
+        else:
+            print("  ✅ 大纲自检全部通过")
 
     @staticmethod
     def _extract_json(text: str) -> Dict:
