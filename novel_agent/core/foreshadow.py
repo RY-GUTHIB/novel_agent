@@ -152,12 +152,26 @@ class ForeshadowTracker:
         if not pending:
             return "【伏笔追踪】当前无待回收伏笔。"
         lines = ["【⚠️ 待回收伏笔提醒（生成本章时考虑兑现）】"]
-        for fs in pending[:10]:
-            char_str = f"，涉及人物：{', '.join(fs.related_characters)}" if fs.related_characters else ""
-            lines.append(
-                f"  [{fs.id}] 第{fs.chapter_planted}章埋下（重要度{fs.importance}）\n"
-                f"    内容：{fs.content}{char_str}"
-            )
+        # 过期伏笔警告（超过5章未回收）
+        expired = [fs for fs in pending if chapter - fs.chapter_planted > 5]
+        if expired:
+            lines.append(f"\n  🔴 过期伏笔（已超过5章未回收，强烈建议本章兑现！）：")
+            for fs in expired:
+                lines.append(
+                    f"    [{fs.id}] 第{fs.chapter_planted}章埋下（已过 {chapter - fs.chapter_planted} 章）\n"
+                    f"      内容：{fs.content[:80]}{'...' if len(fs.content) > 80 else ''}"
+                )
+        # 正常待回收
+        normal = [fs for fs in pending if fs not in expired]
+        if normal:
+            if expired:
+                lines.append(f"\n  🟡 其他待回收伏笔：")
+            for fs in normal[:10]:
+                char_str = f"，涉及人物：{', '.join(fs.related_characters)}" if fs.related_characters else ""
+                lines.append(
+                    f"  [{fs.id}] 第{fs.chapter_planted}章埋下（重要度{fs.importance}）\n"
+                    f"    内容：{fs.content}{char_str}"
+                )
         if len(pending) > 10:
             lines.append(f"  ...还有 {len(pending) - 10} 个伏笔未显示")
         return "\n".join(lines)

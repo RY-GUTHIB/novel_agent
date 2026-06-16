@@ -60,6 +60,7 @@ class SpacetimeGuard:
         violations.extend(self._check_time_order(chapter, time_tag))
         violations.extend(self._check_season(chapter, time_tag))
         violations.extend(self._check_spatial_reachability(chapter, characters, location, time_tag))
+        violations.extend(self._check_character_consistency(chapter, characters))
 
         fatal_errors = []
         warnings = []
@@ -184,6 +185,31 @@ class SpacetimeGuard:
         if m:
             return int(m.group(1))
         return None
+
+    # ====== 人物一致性检查 ======
+
+    def _check_character_consistency(self, chapter: int,
+                                      characters: List[str]) -> List[SpacetimeViolation]:
+        """检查人物状态一致性：同名必须同人，禁止一个人物两套信息"""
+        violations = []
+        for char_name in characters:
+            if char_name not in self.memory.characters:
+                continue
+            c = self.memory.characters[char_name]
+            # 死亡人物不得出场
+            if c.status == "dead":
+                violations.append(SpacetimeViolation(
+                    type="character", severity="fatal", chapter=chapter,
+                    message=f"{char_name} 已标记为「死亡」（第{c.first_appeared}章出场），"
+                            f"本章不得作为活人出场。如需回忆/幻象，请在 characters 列表中注明。"
+                ))
+            # 失踪人物不得直接出场
+            if c.status == "missing":
+                violations.append(SpacetimeViolation(
+                    type="character", severity="warning", chapter=chapter,
+                    message=f"{char_name} 已标记为「失踪」，本章如需出场必须先交代行踪。"
+                ))
+        return violations
 
     # ====== 空间检查 ======
 

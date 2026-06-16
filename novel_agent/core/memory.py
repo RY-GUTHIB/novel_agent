@@ -399,7 +399,13 @@ class MemoryManager:
     def get_generation_contract(self, chapter: int, characters: List[str]) -> str:
         """生成「一致性契约」—— 写作前必须遵守的硬性约束清单"""
         stance_map = {"friendly": "🟢友好", "neutral": "⚪中立", "hostile": "🔴敌对", "adversarial": "🟠对立"}
-        lines = [f"【第{chapter}章 一致性契约（写作前必须逐条确认，不可违反）】"]
+        lines = [
+            f"【第{chapter}章 一致性契约（写作前必须逐条确认，不可违反）】",
+            "",
+            "⚠️ 以下事实已在正文中确立，是本书的「宪法」。新章节不得与以下任何一条矛盾。",
+            "⚠️ 如果本章需要「揭示真相推翻旧认知」，必须在正文中给出充分的转折描写，并在 SETTINGS_JSON 中回写。",
+            "",
+        ]
         has_content = False
 
         for char_name in characters:
@@ -407,19 +413,35 @@ class MemoryManager:
                 continue
             c = self.characters[char_name]
             has_content = True
-            lines.append(f"\n  ═══ {char_name} ═══")
 
+            # 人物卡标题
+            status_tag = ""
+            if c.status == "dead":
+                status_tag = " ⚰️【已死亡——本章不得出场，除非回忆/幻象】"
+            elif c.status == "missing":
+                status_tag = " ❓【失踪——本章不得直接出场，除非交代行踪】"
+            lines.append(f"  ═══ {char_name}{status_tag} ═══")
+
+            # 不可改变的事实（强约束）
             if c.personality:
                 lines.append(f"  🔒 性格锁定：{c.personality}")
-                lines.append(f"     → 本章中 {char_name} 的所有言行必须符合此性格。")
+                lines.append(f"     → 本章中 {char_name} 的所有言行必须符合此性格，不得性格突变。")
             if c.speaking_style:
-                lines.append(f"  🔒 语言风格：{c.speaking_style}")
+                lines.append(f"  🔒 语言风格锁定：{c.speaking_style}")
+                lines.append(f"     → {char_name} 的对话风格必须与以上一致。")
             if c.cultivation:
-                lines.append(f"  🔒 当前修为：{c.cultivation}")
-                lines.append(f"     → 不得超出此修为范围使用能力（除非本章有突破描写）。")
+                lines.append(f"  🔒 修为锁定：{c.cultivation}")
+                lines.append(f"     → 不得低于或远超此修为（除非本章明确描写突破/受伤降级）。")
+            if c.current_location:
+                lines.append(f"  📍 上一章末位置：{c.current_location}")
+                lines.append(f"     → 如果本章 {char_name} 出现在其他地点，必须描写移动过程（交通方式/耗时）。")
+            if c.background:
+                lines.append(f"  🔒 背景锁定：{c.background}")
+                lines.append(f"     → {char_name} 的出身/历史不得被篡改。")
 
+            # 关系立场（强约束）
             if c.relationships_detail:
-                lines.append(f"  🔒 已有关系（不可随意改变立场，除非有剧情转折）：")
+                lines.append(f"  🔒 关系立场锁定：")
                 for other, detail in c.relationships_detail.items():
                     rel_type = detail.get("type", "")
                     stance = detail.get("stance", "neutral")
@@ -428,21 +450,25 @@ class MemoryManager:
                     key_events = detail.get("key_events", [])
                     if key_events:
                         lines.append(f"       历史事件：{'；'.join(key_events)}")
+                lines.append(f"     ⚠️ 友好不能突然反目，敌对不能突然亲密，除非本章有充分转折描写。")
 
+            # 角色已知信息（强约束）
             if char_name in self.character_knowledge:
                 known = [k for k in self.character_knowledge[char_name] if k.chapter_learned < chapter]
                 if known:
-                    lines.append(f"  🔒 已知信息（{char_name} 已经知道，不得表现出惊讶/首次获知）：")
+                    lines.append(f"  🔒 已知信息锁定（{char_name} 已经知道，不得再表现出惊讶/好奇）：")
                     for k in known:
-                        lines.append(f"     → {k.knowledge}（第{k.chapter_learned}章，{k.source}）")
+                        lines.append(f"     → {k.knowledge}（第{k.chapter_learned}章获知，来源：{k.source}）")
+                    lines.append(f"     ⚠️ 如果本章 {char_name} 需要「表现出惊讶」，必须是针对新信息，不能是对以上已知信息的反应。")
 
         active_rules = [r for r in self.plot_rules.values() if not r.overridden]
         if active_rules:
             has_content = True
-            lines.append(f"\n  ═══ 剧情规则（不可违反）═══")
+            lines.append(f"\n  ═══ 剧情规则（宪法级别，不可违反）═══")
             for r in active_rules:
                 source = f"（{r.source_character}，第{r.chapter_introduced}章）" if r.source_character else f"（第{r.chapter_introduced}章）"
                 lines.append(f"  ⚖️ IF「{r.condition}」→ THEN「{r.consequence}」{source}")
+            lines.append(f"  ⚠️ 以上规则已在正文中明确声明。违反任何一条都是剧情 Bug。")
 
         lines.append(f"\n  ═══ 出场人物关系网 ═══")
         has_rel = False
@@ -462,7 +488,7 @@ class MemoryManager:
 
         if not has_content:
             return "（无特殊一致性约束）"
-        lines.append(f"\n  ⚠️ 以上所有约束均为硬性要求。违反任何一条都将导致剧情矛盾。")
+        lines.append(f"\n  ⛔ 以上所有约束均为硬性宪法级别。违反任何一条都将导致剧情矛盾，审校时会标记为「高」严重性。")
         return "\n".join(lines)
 
     def validate_chapter_characters(self, chapter: int, characters: List[str]) -> List[str]:
