@@ -282,7 +282,7 @@ class PlannerAgent:
         if fs_list:
             for fs_data in fs_list:
                 if isinstance(fs_data, dict) and fs_data.get("content"):
-                    fs = self.foreshadow.plant(
+                    fs_id = self.foreshadow.plant(
                         chapter=fs_data.get("plant_chapter", 1),
                         content=fs_data["content"],
                         type=fs_data.get("type", "cross_volume"),
@@ -291,7 +291,11 @@ class PlannerAgent:
                     )
                     harvest_ch = fs_data.get("harvest_chapter")
                     if harvest_ch:
-                        fs.chapter_resolved = harvest_ch
+                        # plant() 返回 str(fs_id)，需要通过 id 查找 Foreshadow 对象来设置 chapter_resolved
+                        for fs in self.foreshadow.foreshadows:
+                            if fs.id == fs_id:
+                                fs.chapter_resolved = harvest_ch
+                                break
 
             # 伏笔总量 > 30 时自动精简：仅保留跨卷伏笔 + 最近 2 卷的当卷伏笔
             total_fs = len(self.foreshadow.foreshadows)
