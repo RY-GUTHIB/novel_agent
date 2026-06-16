@@ -26,6 +26,9 @@ desktop.ini
 .env
 .env.local
 
+# Main entry point (contains API keys, keep local only)
+main.py
+
 # Output (generated chapters, can be regenerated)
 projects/*/output/
 
