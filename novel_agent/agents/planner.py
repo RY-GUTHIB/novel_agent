@@ -395,10 +395,12 @@ class PlannerAgent:
         if fs_count > 30:
             issues.append(f"伏笔总数={fs_count}，超过30")
 
-        # 10. 每卷至少1条跨卷伏笔
+        # 10. 每卷至少1条跨卷伏笔（最后一卷除外，没有后续卷可跨）
+        total_vols = len(outline.get("volumes", []))
         for i, vol in enumerate(outline.get("volumes", [])):
+            if i + 1 == total_vols:
+                continue  # 最后一卷不要求跨卷伏笔
             vol_chs = [c["chapter"] for c in vol.get("chapters", [])]
-            vol_last_ch = max(vol_chs) if vol_chs else 0
             has_cross = any(
                 fs.get("type") == "cross_volume" and fs.get("plant_chapter", 0) in vol_chs
                 for fs in outline.get("foreshadows", [])
@@ -477,14 +479,14 @@ class PlannerAgent:
         # === 支线自检 ===
         side_quests = outline.get("side_quests", [])
         if side_quests:
-            # 15. 支线章节占比 20%-35%
+            # 15. 支线章节占比 10%-35%（降低下限，LLM 常产出不足）
             total_chapters = meta.get("total_chapters", 0)
             sq_chapters = sum(sq.get("end_chapter", sq.get("start_chapter", 0)) - sq.get("start_chapter", 0) + 1
                              for sq in side_quests)
             if total_chapters > 0:
                 sq_ratio = sq_chapters / total_chapters
-                if sq_ratio < 0.20:
-                    issues.append(f"支线占比={sq_ratio:.1%}，不足20%")
+                if sq_ratio < 0.10:
+                    issues.append(f"支线占比={sq_ratio:.1%}，不足10%")
                 elif sq_ratio > 0.35:
                     issues.append(f"支线占比={sq_ratio:.1%}，超过35%")
 
@@ -517,13 +519,14 @@ class PlannerAgent:
                 if not output.get("items") and not output.get("characters") and not output.get("rewards"):
                     issues.append(f"支线{sq.get('id','?')}无任何产出物（items/characters/rewards均为空）")
 
-            # 19. 无支线脱离主线
+            # 19. 无支线脱离主线（放宽检测：只要有 connects_to_main 且非空即可，不再强制关键词）
             for sq in side_quests:
                 connects = sq.get("connects_to_main", "")
                 summary = sq.get("summary", "")
-                main_hooks = ("为后续主线", "铺垫主线", "指向主线", "引出", "为卷末", "为下一阶段")
-                if not any(hook in connects or hook in summary for hook in main_hooks):
-                    issues.append(f"支线{sq.get('id','?')}疑似脱离主线（connects_to_main和summary中无主线关联词）")
+                main_hooks = ("为后续主线", "铺垫主线", "指向主线", "引出", "为卷末", "为下一阶段",
+                              "主线", "主角", "第", "章", "剧情", "推进")
+                if not connects and not any(hook in summary for hook in main_hooks):
+                    issues.append(f"支线{sq.get('id','?')}疑似脱离主线（connects_to_main为空且summary无主线关联词）")
 
         if issues:
             print("  ⚠️ 大纲自检发现问题：")

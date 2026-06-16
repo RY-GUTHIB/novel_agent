@@ -176,14 +176,14 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
         # 初始化物品状态追踪（方案1+2+5：从大纲中提取 key_items）
         key_items = outline.get("key_items", [])
         for item_data in key_items:
-            if isinstance(item_data, dict) and item_data.get("name"):
+            if isinstance(item_data, dict) and item_data.get("item_name"):
                 memory.add_item(ItemProfile(
-                    name=item_data["name"],
+                    name=item_data["item_name"],
                     type=item_data.get("type", ""),
-                    description=item_data.get("description", ""),
-                    first_appeared=item_data.get("first_appeared", 1),
-                    first_giver=item_data.get("first_giver", ""),
-                    current_holder=item_data.get("current_holder", ""),
+                    description=item_data.get("purpose", item_data.get("description", "")),
+                    first_appeared=item_data.get("first_chapter", item_data.get("first_appeared", 1)),
+                    first_giver=item_data.get("giver", item_data.get("first_giver", "")),
+                    current_holder=item_data.get("receiver", item_data.get("current_holder", "")),
                     prohibited_actions=item_data.get("prohibited_actions",
                         ["give_again_by_other", "duplicate"]),
                     status=item_data.get("status", "active"),
@@ -191,7 +191,7 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
         if key_items:
             print(f"  📦 初始化 {len(key_items)} 个关键物品状态追踪")
 
-        title = outline.get("title", project_name)
+        title = outline.get("meta", {}).get("title", outline.get("title", project_name))
         update_project_progress(project_name, outline=outline, chapters_written=0)
 
         if title != project_name:
@@ -211,15 +211,15 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
                     project_name = title
                     print(f"   ✅ 已重命名为「{title}」")
 
-        # 统计章节数（兼容 volumes 格式）
-        chapter_count = len(outline.get('chapter_plan', []))
+        # 统计章节数（兼容 volumes 格式和新旧字段名）
+        chapter_count = len(_get_chapter_plan(outline))
         if chapter_count == 0 and 'volumes' in outline:
-            chapter_count = sum(len(v.get('chapter_plan', [])) for v in outline['volumes'])
+            chapter_count = sum(len(v.get('chapters', v.get('chapter_plan', []))) for v in outline['volumes'])
         vol_count = len(outline.get('volumes', []))
         vol_info = f"（{vol_count}卷）" if vol_count else ""
 
         print(f"\n✅ 大纲生成完成！")
-        print(f"   标题：{outline.get('title', '未知')}")
+        print(f"   标题：{title}")
         print(f"   人物：{len(outline.get('characters', []))} 个")
         print(f"   地点：{len(outline.get('locations', []))} 个")
         print(f"   规划章节：{chapter_count} 章{vol_info}")
@@ -282,7 +282,7 @@ def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
 
     title = ch_data.get("title", "")
     summary = ch_data.get("summary", "")
-    time_tag = ch_data.get("time_tag", "")
+    time_tag = ch_data.get("time", ch_data.get("time_tag", ""))
     location = ch_data.get("location", "")
     characters = ch_data.get("characters", [])
 
@@ -292,7 +292,10 @@ def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
     print(f"人物：{', '.join(characters)}")
     print("\n🤖 正在生成，请稍候（约1-3分钟）...\n")
 
-    writer = WriterAgent(memory, continuity, foreshadow, genre=outline.get("genre", "玄幻"), style=outline.get("style", "热血"))
+    meta = outline.get("meta", {})
+    writer = WriterAgent(memory, continuity, foreshadow,
+                         genre=meta.get("genre", outline.get("genre", "玄幻")),
+                         style=meta.get("style", outline.get("style", "热血")))
     reviewer = ReviewerAgent(memory, continuity, foreshadow)
 
     # ===== 生成前预检 =====
@@ -371,11 +374,16 @@ def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
 
 
 def _get_chapter_plan(outline: dict) -> list:
-    chapter_plan = outline.get("chapter_plan", [])
-    if not chapter_plan and "volumes" in outline:
+    """获取扁平章节列表，兼容新旧格式"""
+    # 新格式：volumes[].chapters
+    if "volumes" in outline:
+        chapters = []
         for vol in outline.get("volumes", []):
-            chapter_plan.extend(vol.get("chapter_plan", []))
-    return chapter_plan
+            chapters.extend(vol.get("chapters", vol.get("chapter_plan", [])))
+        if chapters:
+            return chapters
+    # 旧格式：顶层 chapter_plan
+    return outline.get("chapter_plan", [])
 
 
 def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, location, characters, settings_json=None, logic_constraints=""):
@@ -463,7 +471,7 @@ def cmd_review(memory, continuity, foreshadow, project_name):
     if outline_path.exists():
         with open(outline_path, "r", encoding="utf-8") as f:
             outline = json.load(f)
-        ch_data = next((c for c in outline.get("chapter_plan", []) if c["chapter"] == chapter_num), None)
+        ch_data = next((c for c in _get_chapter_plan(outline) if c["chapter"] == chapter_num), None)
         if ch_data:
             title = ch_data.get("title", title)
 
@@ -508,7 +516,7 @@ def cmd_status(memory, continuity, foreshadow, project_name):
     if outline_path.exists():
         with open(outline_path, "r", encoding="utf-8") as f:
             outline = json.load(f)
-        print(f"\n大纲标题：{outline.get('title', '未知')}")
+        print(f"\n大纲标题：{outline.get('meta', {}).get('title', outline.get('title', '未知'))}")
         chapter_plan = _get_chapter_plan(outline)
         print(f"规划章节：{len(chapter_plan)} 章")
     else:
@@ -840,5 +848,5 @@ def _get_novel_title() -> str:
     if outline_path.exists():
         with open(outline_path, "r", encoding="utf-8") as f:
             outline = json.load(f)
-        return outline.get("title", "")
+        return outline.get("meta", {}).get("title", outline.get("title", ""))
     return ""
