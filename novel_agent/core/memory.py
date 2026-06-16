@@ -533,10 +533,10 @@ class MemoryManager:
         })
         self._save_items()
 
-    def build_state_snapshot(self, chapter: int, characters: list) -> str:
+    def build_state_snapshot(self, chapter: int, characters: list, timeline_events: list = None) -> str:
         """构建「当前世界状态快照」——写作和审校前注入 prompt，防止事实矛盾。
 
-        提取：人物修为、身份、位置、物品归属、已揭示设定，生成精简文本。
+        提取：人物修为、身份、位置、物品归属、已揭示设定、未兑现承诺。
         """
         parts = []
 
@@ -590,6 +590,50 @@ class MemoryManager:
                 parts.append(f"- {key}：{s.value[:80]}")
         if not recent_ws:
             parts.append("（无）")
+
+        # 4. 承诺清单（未兑现的规则、物品禁止操作、时间死线）
+        parts.append("\n## ⚠️ 承诺清单（本章写作前必须逐条确认，违反任何一条即为bug）")
+        has_commitments = False
+
+        # 4a. 未兑现的剧情规则（出场人物声明的规则）
+        active_rules = [r for r in self.plot_rules.values() if not r.overridden]
+        if active_rules:
+            parts.append("\n🔴 剧情规则：")
+            for r in active_rules:
+                parts.append(f"  - 第{r.chapter_introduced}章「{r.rule_text[:60]}」")
+                parts.append(f"    → IF {r.condition} THEN {r.consequence}")
+            has_commitments = True
+
+        # 4b. 物品禁止操作
+        if self.items:
+            item_warnings = []
+            for name, item in self.items.items():
+                if item.prohibited_actions:
+                    item_warnings.append(f"  - {name}：⛔ {', '.join(item.prohibited_actions)}")
+            if item_warnings:
+                parts.append("\n🔴 物品禁止操作：")
+                parts.extend(item_warnings)
+                has_commitments = True
+
+        # 4c. 时间死线（从 timeline 中提取包含"天后""之后""内"的时间约束）
+        if timeline_events:
+            deadline_events = []
+            for e in timeline_events:
+                if e.chapter >= chapter:
+                    continue
+                tt = e.time_tag or ""
+                # 检测时间约束关键词
+                deadline_keywords = ["天后", "之后", "之内", "前", "马上", "立刻", "尽快", "三日内", "三日后"]
+                if any(kw in tt for kw in deadline_keywords) or any(kw in (e.event or "") for kw in deadline_keywords):
+                    deadline_events.append(e)
+            if deadline_events:
+                parts.append("\n🟡 时间死线：")
+                for e in deadline_events[-5:]:  # 最近5条
+                    parts.append(f"  - 第{e.chapter}章：{e.time_tag} — {e.event[:60]}")
+                has_commitments = True
+
+        if not has_commitments:
+            parts.append("（无未兑现承诺）")
 
         return "\n".join(parts)
 

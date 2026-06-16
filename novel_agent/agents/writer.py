@@ -138,8 +138,9 @@ class WriterAgent:
         if not logic_constraints:
             logic_constraints = "（无特殊逻辑约束）"
         
-        # 构建状态快照
-        state_snapshot = self.memory.build_state_snapshot(chapter, characters)
+        # 构建状态快照（含承诺清单，从 continuity 取时间线事件）
+        timeline_events = self.continuity.timeline if self.continuity else None
+        state_snapshot = self.memory.build_state_snapshot(chapter, characters, timeline_events)
         
         return CHAPTER_WRITER_USER_PROMPT.format(
             chapter=chapter, title=title, summary=summary,
@@ -292,8 +293,9 @@ class WriterAgent:
         if not logic_constraints:
             logic_constraints = "（无特殊逻辑约束）"
 
-        # 构建状态快照
-        state_snapshot = self.memory.build_state_snapshot(chapter, characters)
+        # 构建状态快照（含承诺清单，从 continuity 取时间线事件）
+        timeline_events = self.continuity.timeline if self.continuity else None
+        state_snapshot = self.memory.build_state_snapshot(chapter, characters, timeline_events)
 
         return CHAPTER_REVISER_USER_PROMPT.format(
             chapter=chapter, title=title, review_report=review_report,
@@ -428,8 +430,22 @@ class WriterAgent:
 
     @staticmethod
     def _split_output_and_settings(raw_output: str) -> tuple:
-        """从 LLM 输出中分离正文和设定 JSON"""
-        separator = "===SETTINGS_JSON==="
+        """从 LLM 输出中分离正文和设定 JSON，同时剥离自检段"""
+        # 剥离 PRE_FLIGHT_CHECK 自检段（不写入最终文件）
+        flight_marker = "===PRE_FLIGHT_CHECK==="
+        settings_marker = "===SETTINGS_JSON==="
+        if flight_marker in raw_output:
+            # 正文在自检段之前，SETTINGS_JSON 在之后（或没有）
+            pre_flight = raw_output.split(flight_marker, 1)[0]
+            post_flight = raw_output.split(flight_marker, 1)[1]
+            if settings_marker in post_flight:
+                # 正文 + SETTINGS_JSON（自检段在中间，丢弃）
+                raw_output = pre_flight + "\n" + post_flight
+            else:
+                # 没有 SETTINGS_JSON，正文在自检段之前
+                raw_output = pre_flight
+
+        separator = settings_marker
         if separator in raw_output:
             parts = raw_output.split(separator, 1)
             content = parts[0].strip()

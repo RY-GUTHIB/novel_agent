@@ -49,8 +49,9 @@ class ReviewerAgent:
                 note = f"（{last_rec.note}）" if last_rec and last_rec.note else ""
                 spatial_lines.append(f"  {char}：{last_loc}{note}")
 
-        # 构建状态快照
-        state_snapshot = self.memory.build_state_snapshot(chapter, characters or [])
+        # 构建状态快照（含承诺清单，从 continuity 取时间线事件）
+        timeline_events = self.continuity.timeline if self.continuity else None
+        state_snapshot = self.memory.build_state_snapshot(chapter, characters or [], timeline_events)
 
         user_prompt = REVIEWER_USER_PROMPT.format(
             chapter=chapter, title=title, content=content,
