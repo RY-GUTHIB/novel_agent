@@ -28,6 +28,7 @@ desktop.ini
 
 # Main entry point (contains API keys, keep local only)
 main.py
+config.py
 
 # Output (generated chapters, can be regenerated)
 projects/*/output/
