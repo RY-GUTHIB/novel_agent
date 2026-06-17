@@ -10,6 +10,7 @@ import time
 import json
 import re
 import logging
+from functools import lru_cache
 from typing import Optional
 import config
 
@@ -18,6 +19,43 @@ logger = logging.getLogger(__name__)
 # 重试配置
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2  # 秒，指数退避基数
+
+# ========== 可重试异常集合 ==========
+
+_RETRYABLE_EXCEPTIONS = (
+    ConnectionError,
+    TimeoutError,
+)
+try:
+    from openai import APIError as OpenAIAPIError
+    from openai import APITimeoutError, APIConnectionError, RateLimitError, InternalServerError
+    _RETRYABLE_EXCEPTIONS += (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
+except ImportError:
+    OpenAIAPIError = Exception
+
+try:
+    from anthropic import APIError as AnthropicAPIError
+    from anthropic import APITimeoutError as AnthropicTimeoutError
+    from anthropic import RateLimitError as AnthropicRateLimitError
+    _RETRYABLE_EXCEPTIONS += (AnthropicAPIError, AnthropicTimeoutError, AnthropicRateLimitError)
+except ImportError:
+    pass
+
+# 不可重试的错误
+_NON_RETRYABLE_MESSAGES = ("invalid_api_key", "authentication", "permission", "401", "403")
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """判断异常是否可重试"""
+    if isinstance(exc, _RETRYABLE_EXCEPTIONS):
+        return True
+    # OpenAI APIError 是基类，需要排除 401/403 等不可重试子类型
+    if isinstance(exc, OpenAIAPIError):
+        err_str = str(exc).lower()
+        if any(kw in err_str for kw in _NON_RETRYABLE_MESSAGES):
+            return False
+        return True
+    return False
 
 
 def _retry(fn, *args, max_retries=MAX_RETRIES, **kwargs):
@@ -28,9 +66,7 @@ def _retry(fn, *args, max_retries=MAX_RETRIES, **kwargs):
             return fn(*args, **kwargs)
         except Exception as e:
             last_exc = e
-            # 不可重试的错误直接抛出
-            err_str = str(e).lower()
-            if any(kw in err_str for kw in ("invalid_api_key", "authentication", "permission", "401", "403")):
+            if not _is_retryable(e):
                 raise
             if attempt < max_retries:
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
@@ -41,19 +77,40 @@ def _retry(fn, *args, max_retries=MAX_RETRIES, **kwargs):
     raise last_exc
 
 
-# OpenAI 客户端缓存（按 base_url 复用，避免重复创建）
-_client_cache: dict = {}
+# ========== Provider 配置策略 ==========
 
+_PROVIDERS = {
+    "deepseek": lambda: (config.DEEPSEEK_BASE_URL, config.DEEPSEEK_API_KEY, config.DEEPSEEK_MODEL, "openai"),
+    "qwen": lambda: (config.QWEN_BASE_URL, config.QWEN_API_KEY, config.QWEN_MODEL, "openai"),
+    "ollama": lambda: (config.OLLAMA_BASE_URL, "ollama", config.OLLAMA_MODEL, "openai"),
+    "volcengine": lambda: (config.VOLCENGINE_BASE_URL, config.VOLCENGINE_API_KEY, config.VOLCENGINE_MODEL, "openai"),
+    "gemini": lambda: ("", "", config.GEMINI_MODEL, "gemini"),
+    "claude": lambda: ("", config.CLAUDE_API_KEY, config.CLAUDE_MODEL, "claude"),
+}
+
+
+def _get_provider_config(provider: str):
+    """获取 provider 配置，返回 (base_url, api_key, model, api_type)"""
+    if provider not in _PROVIDERS:
+        raise ValueError(f"不支持的 LLM_PROVIDER: {provider}")
+    return _PROVIDERS[provider]()
+
+
+# ========== OpenAI 客户端缓存 ==========
+
+@lru_cache(maxsize=8)
 def _get_client(base_url: str, api_key: str):
-    """获取或创建缓存的 OpenAI 客户端"""
-    cache_key = f"{base_url}:{api_key[:8]}"
-    if cache_key not in _client_cache:
-        try:
-            from openai import OpenAI
-        except ImportError:
-            raise ImportError("请先安装 openai: pip install openai>=1.0.0")
-        _client_cache[cache_key] = OpenAI(base_url=base_url, api_key=api_key)
-    return _client_cache[cache_key]
+    """获取或创建缓存的 OpenAI 客户端（LRU 缓存，最多 8 个客户端）"""
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise ImportError("请先安装 openai: pip install openai>=1.0.0")
+    return OpenAI(base_url=base_url, api_key=api_key)
+
+
+def clear_client_cache():
+    """清理所有缓存的 OpenAI 客户端"""
+    _get_client.cache_clear()
 
 
 def _call_openai_compatible(base_url: str, api_key: str, model: str,
@@ -148,39 +205,18 @@ def generate(system_prompt: str, user_prompt: str,
     if max_tokens is None:
         max_tokens = config.MAX_TOKENS
     provider = config.LLM_PROVIDER.lower()
+    base_url, api_key, model, api_type = _get_provider_config(provider)
 
-    if provider == "deepseek":
+    if api_type == "openai":
         return _retry(_call_openai_compatible,
-            config.DEEPSEEK_BASE_URL, config.DEEPSEEK_API_KEY, config.DEEPSEEK_MODEL,
-            system_prompt, user_prompt, temperature, max_tokens
-        )
-
-    elif provider == "qwen":
-        return _retry(_call_openai_compatible,
-            config.QWEN_BASE_URL, config.QWEN_API_KEY, config.QWEN_MODEL,
-            system_prompt, user_prompt, temperature, max_tokens
-        )
-
-    elif provider == "ollama":
-        return _retry(_call_openai_compatible,
-            config.OLLAMA_BASE_URL, "ollama", config.OLLAMA_MODEL,
-            system_prompt, user_prompt, temperature, max_tokens
-        )
-
-    elif provider == "gemini":
+            base_url, api_key, model,
+            system_prompt, user_prompt, temperature, max_tokens)
+    elif api_type == "gemini":
         return _retry(_call_gemini, system_prompt, user_prompt, temperature, max_tokens)
-
-    elif provider == "claude":
+    elif api_type == "claude":
         return _retry(_call_claude, system_prompt, user_prompt, temperature, max_tokens)
-
-    elif provider == "volcengine":
-        return _retry(_call_openai_compatible,
-            config.VOLCENGINE_BASE_URL, config.VOLCENGINE_API_KEY, config.VOLCENGINE_MODEL,
-            system_prompt, user_prompt, temperature, max_tokens
-        )
-
     else:
-        raise ValueError(f"不支持的 LLM_PROVIDER: {provider}，请在 config.py 中修改")
+        raise ValueError(f"不支持的 API 类型: {api_type}")
 
 
 def check_api_key():
@@ -216,28 +252,14 @@ def generate_stream(system_prompt: str, user_prompt: str,
     if max_tokens is None:
         max_tokens = config.MAX_TOKENS
     provider = config.LLM_PROVIDER.lower()
-    if provider not in ("deepseek", "qwen", "ollama", "volcengine"):
+    base_url, api_key, model, api_type = _get_provider_config(provider)
+
+    if api_type != "openai":
         # 非流式降级为普通生成
         yield generate(system_prompt, user_prompt, temperature, max_tokens)
         return
 
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise ImportError("请先安装 openai: pip install openai>=1.0.0")
-
-    if provider == "deepseek":
-        client = OpenAI(base_url=config.DEEPSEEK_BASE_URL, api_key=config.DEEPSEEK_API_KEY)
-        model = config.DEEPSEEK_MODEL
-    elif provider == "qwen":
-        client = OpenAI(base_url=config.QWEN_BASE_URL, api_key=config.QWEN_API_KEY)
-        model = config.QWEN_MODEL
-    elif provider == "volcengine":
-        client = OpenAI(base_url=config.VOLCENGINE_BASE_URL, api_key=config.VOLCENGINE_API_KEY)
-        model = config.VOLCENGINE_MODEL
-    else:  # ollama
-        client = OpenAI(base_url=config.OLLAMA_BASE_URL, api_key="ollama")
-        model = config.OLLAMA_MODEL
+    client = _get_client(base_url, api_key)
 
     last_exc = None
     for attempt in range(MAX_RETRIES + 1):
@@ -264,8 +286,7 @@ def generate_stream(system_prompt: str, user_prompt: str,
             return
         except Exception as e:
             last_exc = e
-            err_str = str(e).lower()
-            if any(kw in err_str for kw in ("invalid_api_key", "authentication", "permission", "401", "403")):
+            if not _is_retryable(e):
                 raise
             if attempt < MAX_RETRIES:
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
@@ -293,7 +314,7 @@ def parse_json(text: str) -> dict:
             return json.loads(match.group(1))
         except json.JSONDecodeError:
             pass
-    # 第3层：用栈算法找到第一个完整闭合的 JSON 对象（避免贪婪匹配吞入中间文本）
+    # 第3层：用栈算法找到第一个完整闭合的 JSON 对象
     result = _extract_first_json_object(text)
     if result is not None:
         return result
@@ -306,13 +327,11 @@ def parse_json(text: str) -> dict:
 
 def _repair_truncated_json(text: str) -> Optional[dict]:
     """检测被截断的 JSON，尝试补全闭合括号后解析"""
-    # 找到第一个 {
     start = text.find('{')
     if start == -1:
         return None
     partial = text[start:]
 
-    # 用栈计算括号平衡
     stack = []
     in_string = False
     escape = False
@@ -340,9 +359,8 @@ def _repair_truncated_json(text: str) -> Optional[dict]:
     open_braces = sum(1 for c in stack if c == '{')
     open_brackets = sum(1 for c in stack if c == '[')
     if open_braces == 0 and open_brackets == 0:
-        return None  # 文本本身是完整的
+        return None
 
-    # 补全闭合括号后重试
     repaired = partial + '}' * open_braces + ']' * open_brackets
     try:
         return json.loads(repaired)
@@ -380,7 +398,6 @@ def _extract_first_json_object(text: str) -> Optional[dict]:
                 try:
                     return json.loads(candidate)
                 except json.JSONDecodeError:
-                    # 继续找下一个闭合点
                     continue
     return None
 

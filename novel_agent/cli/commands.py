@@ -26,6 +26,7 @@ from novel_agent.agents.writer import WriterAgent
 from novel_agent.agents.reviewer import ReviewerAgent
 from novel_agent.visualizer import generate_all_visualizations
 from novel_agent.llm.client import check_api_key
+from novel_agent.core.file_utils import atomic_write_text
 
 
 # =========== 项目管理 ===========
@@ -42,7 +43,7 @@ def get_current_project_name():
 
 
 def set_current_project(name: str):
-    _CURRENT_PROJECT_FILE.write_text(name, encoding="utf-8")
+    atomic_write_text(_CURRENT_PROJECT_FILE, name)
 
 
 def select_project() -> str:
@@ -153,9 +154,16 @@ def _input_concept() -> str:
 
 # =========== 初始化 ===========
 
-def init_services():
-    """初始化所有服务（必须在 config.set_project() 之后调用）"""
+def init_services(ctx: config.ProjectContext = None):
+    """初始化所有服务。传 ProjectContext 显式指定项目路径，否则用 config.DATA_DIR 默认值。"""
     from novel_agent.core.rag import RAGStore
+    if ctx:
+        return (
+            MemoryManager(data_dir=ctx.data_dir),
+            ContinuityGuard(data_dir=ctx.data_dir),
+            ForeshadowTracker(data_dir=ctx.data_dir),
+            RAGStore(persist_dir=str(ctx.data_dir)),
+        )
     return MemoryManager(), ContinuityGuard(), ForeshadowTracker(), RAGStore()
 
 
@@ -421,7 +429,7 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
             )
             if patched:
                 content = patched
-                settings_json = None  # 定向修补不产生新设定
+                # 定向修补不产生新设定，保留上次 settings_json
                 print("  定向修补完成，重新审校...")
                 prev_score = report["overall_score"]
                 continue
@@ -638,8 +646,8 @@ def cmd_list():
 # =========== 交互循环 ===========
 
 def interactive_loop(project_name):
-    config.set_project(project_name)
-    memory, continuity, foreshadow, rag = init_services()
+    ctx = config.set_project(project_name)
+    memory, continuity, foreshadow, rag = init_services(ctx)
 
     while True:
         print(f"\n📖 当前项目：《{project_name}》")
@@ -703,11 +711,11 @@ def rebuild_novel_md(output_dir: str = None):
     files = sorted(glob.glob(str(chapters_dir / "chapter_*.md")))
     if not files:
         return
-    with open(novel_path, "w", encoding="utf-8") as f:
-        for fp in files:
-            with open(fp, "r", encoding="utf-8") as cf:
-                f.write(cf.read())
-            f.write("\n\n")
+    content_parts = []
+    for fp in files:
+        with open(fp, "r", encoding="utf-8") as cf:
+            content_parts.append(cf.read())
+    atomic_write_text(novel_path, "\n\n".join(content_parts) + "\n\n")
     print(f"  🔄 novel.md 已重新生成（{len(files)} 章）")
 
 

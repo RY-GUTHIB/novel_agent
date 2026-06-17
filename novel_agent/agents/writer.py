@@ -26,12 +26,18 @@ from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
 from novel_agent.core.rag import RAGStore
 from novel_agent.core.validator import ContractValidator, format_violations_report
+from novel_agent.core.file_utils import atomic_write_json, atomic_write_text
 from .prompts import (
     CHAPTER_WRITER_SYSTEM_PROMPT, CHAPTER_WRITER_USER_PROMPT,
     CHAPTER_REVISER_SYSTEM_PROMPT, CHAPTER_REVISER_USER_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
+
+# 预编译正则（伏笔提取）
+_FS_EXTRACT_1 = re.compile(r'\[FS:\s*([一-龥][一-龥\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]')
+_FS_EXTRACT_2 = re.compile(r'FS：\s*([一-龥][一-龥\s，。！？、；：""''（）…—0-9-]{1,}?)(?:\r?\n|$)')
+_FS_EXTRACT_3 = re.compile(r'\[FS：\s*([一-龥][一-龥\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]')
 
 
 class WriterAgent:
@@ -572,15 +578,16 @@ class WriterAgent:
     @staticmethod
     def _save_failed_settings(settings_text: str):
         """保存解析失败的 SETTINGS_JSON 原始文本，方便排查问题"""
-        import config
         from datetime import datetime
         debug_path = Path(config.OUTPUT_DIR) / "debug_settings.txt"
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(debug_path, "w", encoding="utf-8") as f:
-            f.write(f"# 解析失败时间: {timestamp}\n")
-            f.write(f"# 原始文本长度: {len(settings_text)} 字符\n")
-            f.write(f"# 最后50字符: {settings_text[-50:]}\n")
-            f.write(f"# ---\n\n{settings_text}")
+        content = (
+            f"# 解析失败时间: {timestamp}\n"
+            f"# 原始文本长度: {len(settings_text)} 字符\n"
+            f"# 最后50字符: {settings_text[-50:]}\n"
+            f"# ---\n\n{settings_text}"
+        )
+        atomic_write_text(debug_path, content)
         # 同时追加到日志
         debug_log = Path(config.OUTPUT_DIR) / "debug_settings.log"
         with open(debug_log, "a", encoding="utf-8") as f:
@@ -620,9 +627,9 @@ class WriterAgent:
         """
         results = []
         # 提取 [FS: xxx] 标记，要求内容至少 2 个中文字符（允许短伏笔如"破局"）
-        results.extend(re.findall(r'\[FS:\s*([\u4e00-\u9fa5][\u4e00-\u9fa5\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]', content))
-        results.extend(re.findall(r'FS：\s*([\u4e00-\u9fa5][\u4e00-\u9fa5\s，。！？、；：""''（）…—0-9-]{1,}?)(?:\r?\n|$)', content))
-        results.extend(re.findall(r'\[FS：\s*([\u4e00-\u9fa5][\u4e00-\u9fa5\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]', content))
+        results.extend(_FS_EXTRACT_1.findall(content))
+        results.extend(_FS_EXTRACT_2.findall(content))
+        results.extend(_FS_EXTRACT_3.findall(content))
         return list(set(results))
 
     # ========== 设定提取（已合并到写作 prompt 的 ===SETTINGS_JSON=== 输出，以下方法已废弃）==========
@@ -1015,8 +1022,7 @@ class WriterAgent:
         chapters_dir = out_dir / "chapters"
         chapters_dir.mkdir(parents=True, exist_ok=True)
         chapter_path = chapters_dir / f"chapter_{chapter:03d}.md"
-        with open(chapter_path, "w", encoding="utf-8") as f:
-            f.write(f"# 第{chapter}章 {title}\n\n{content}")
+        atomic_write_text(chapter_path, f"# 第{chapter}章 {title}\n\n{content}")
 
     def load_chapter(self, chapter: int, output_dir: str = None) -> str:
         out_dir = Path(output_dir or config.OUTPUT_DIR)

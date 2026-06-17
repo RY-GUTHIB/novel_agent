@@ -30,16 +30,37 @@ class ContractViolation:
 class ContractValidator:
     """生成后契约校验器"""
 
-    def __init__(self):
-        # 立场矛盾的关键词对
-        self._hostile_keywords = ["敌", "仇", "杀", "恨", "怒目", "冷哼", "不屑", "嘲讽", "蔑视"]
-        self._friendly_keywords = ["笑", "亲", "握", "拥", "温柔", "关切", "感激", "信任", "默契", "并肩"]
-
     # 修为境界层级（从低到高）
     CULTIVATION_TIERS = [
         "凡人", "炼气", "筑基", "开光", "融合", "心动", "金丹", "元婴",
         "化神", "炼虚", "合体", "大乘", "渡劫", "真仙", "金仙", "大罗金仙", "圣人",
     ]
+
+    # 预编译正则（热路径复用）
+    _PARA_SPLIT = re.compile(r'\n\s*\n')
+    _SURPRISE_PATTERNS = [
+        re.compile(p) for p in [
+            r'惊讶', r'震惊', r'大吃一惊', r'不敢相信', r'难以置信',
+            r'瞪大了眼', r'目瞪口呆', r'倒吸一口冷气', r'什么[？?！!]',
+            r'你.{0,5}(竟然|居然|原来)', r'(竟然|居然|原来)是',
+            r'(不|没)想到', r'(不|没)曾想',
+        ]
+    ]
+    _LOCATION_PATTERN = re.compile(r'(?:来到|抵达|到达|出现在|站在|坐在|走进|飞入)([^，。,.\n]{2,8})')
+    _TIME_LOCATION_PATTERN = re.compile(r'(?:来到|抵达|到达|出现在|前往)([^，。,.\n]{2,6})')
+    _CN_LAYER_PATTERN = re.compile(r'[第又]?([一二三四五六七八九十百零]+)[层重阶]')
+    _DIGIT_LAYER_PATTERN = re.compile(r'(\d+)[层重阶]')
+    _KNOWLEDGE_CLEAN = re.compile(r'[，。、的是了在有和与或]')
+    _TIME_SPAN_PATTERNS = [
+        (re.compile(r"(?:一天|一日|当天|同日|翌日|次日|第二天)"), 1),
+        (re.compile(r"(?:半日|半天|几个时辰|半晌)"), 0.5),
+        (re.compile(r"(?:一时辰|一个时辰|片刻)"), 0.08),
+    ]
+
+    def __init__(self):
+        # 立场矛盾的关键词对
+        self._hostile_keywords = ["敌", "仇", "杀", "恨", "怒目", "冷哼", "不屑", "嘲讽", "蔑视"]
+        self._friendly_keywords = ["笑", "亲", "握", "拥", "温柔", "关切", "感激", "信任", "默契", "并肩"]
 
     def validate(self, content: str, chapter: int, characters: List[str],
                   memory_mgr, parsed_settings: dict = None,
@@ -132,7 +153,7 @@ class ContractValidator:
 
     def _find_co_occurrences(self, content: str, a: str, b: str) -> List[str]:
         """找到 a 和 b 同时出现的段落"""
-        paragraphs = re.split(r'\n\s*\n', content)
+        paragraphs = self._PARA_SPLIT.split(content)
         results = []
         for para in paragraphs:
             if a in para and b in para and len(para) > 10:
@@ -143,13 +164,6 @@ class ContractValidator:
 
     def _check_knowledge_surprise(self, content, chapter, characters, mem, violations):
         """检查角色是否对已知信息表现出惊讶"""
-        surprise_patterns = [
-            r'惊讶', r'震惊', r'大吃一惊', r'不敢相信', r'难以置信',
-            r'瞪大了眼', r'目瞪口呆', r'倒吸一口冷气', r'什么[？?！!]',
-            r'你.{0,5}(竟然|居然|原来)', r'(竟然|居然|原来)是',
-            r'(不|没)想到', r'(不|没)曾想',
-        ]
-
         for name in characters:
             if name not in mem.character_knowledge:
                 continue
@@ -168,7 +182,7 @@ class ContractValidator:
 
                     # 检查：段落中同时包含知识关键词和惊讶表达
                     has_keyword = any(kw in para for kw in keywords)
-                    has_surprise = any(re.search(p, para) for p in surprise_patterns)
+                    has_surprise = any(p.search(para) for p in self._SURPRISE_PATTERNS)
 
                     if has_keyword and has_surprise:
                         violations.append(ContractViolation(
@@ -180,13 +194,13 @@ class ContractValidator:
 
     def _find_character_paragraphs(self, content: str, name: str) -> List[str]:
         """找到包含某角色名字的段落"""
-        paragraphs = re.split(r'\n\s*\n', content)
+        paragraphs = self._PARA_SPLIT.split(content)
         return [p for p in paragraphs if name in p and len(p) > 10]
 
     def _extract_keywords(self, knowledge: str) -> List[str]:
         """从知识描述中提取关键词"""
         # 去掉常见虚词，取 2-4 字的核心名词
-        knowledge = re.sub(r'[，。、的是了在有和与或]', ' ', knowledge)
+        knowledge = self._KNOWLEDGE_CLEAN.sub(' ', knowledge)
         words = [w.strip() for w in knowledge.split() if len(w.strip()) >= 2]
         return words[:5]  # 最多取 5 个关键词
 
@@ -233,8 +247,7 @@ class ContractValidator:
         ]
 
         # 简单检查：如果正文中出现了 "在X" 且 X 不是上一章地点，但没有移动描写
-        location_pattern = r'(?:来到|抵达|到达|出现在|站在|坐在|走进|飞入)([^，。,.\n]{2,8})'
-        locations_mentioned = re.findall(location_pattern, content)
+        locations_mentioned = self._LOCATION_PATTERN.findall(content)
 
         if locations_mentioned:
             has_travel = any(kw in content for kw in travel_keywords)
@@ -332,7 +345,7 @@ class ContractValidator:
                 tier = i
                 break
         # 提取层数（如 "三层"、"九重"）
-        layer_pattern = re.search(r'[第又]?([一二三四五六七八九零十百]+)[层重阶]', cultivation)
+        layer_pattern = ContractValidator._CN_LAYER_PATTERN.search(cultivation)
         if layer_pattern:
             layer_map = {
                 "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
@@ -345,7 +358,7 @@ class ContractValidator:
             if len(layer_str) == 1:
                 return (tier, layer_map.get(layer_str, 0))
         # 提取数字层数（如 "9层"、"3重"）
-        digit_pattern = re.search(r'(\d+)[层重阶]', cultivation)
+        digit_pattern = ContractValidator._DIGIT_LAYER_PATTERN.search(cultivation)
         if digit_pattern:
             return (tier, int(digit_pattern.group(1)))
         return (tier, 0)
@@ -648,14 +661,9 @@ class ContractValidator:
                 ))
 
         # 6b. 时间倒流检查（一天内横跨大陆等）
-        time_span_patterns = [
-            (r"(?:一天|一日|当天|同日|翌日|次日|第二天)", 1),
-            (r"(?:半日|半天|几个时辰|半晌)", 0.5),
-            (r"(?:一时辰|一个时辰|片刻)", 0.08),
-        ]
         time_span_days = 0
-        for pattern, days in time_span_patterns:
-            if re.search(pattern, content):
+        for pattern, days in self._TIME_SPAN_PATTERNS:
+            if pattern.search(content):
                 time_span_days = days
                 break
 
@@ -665,7 +673,7 @@ class ContractValidator:
             "穿过", "翻过", "越过", "渡过", "传送阵", "遁术", "瞬移",
         ]
         location_pattern = r'(?:来到|抵达|到达|出现在|前往)([^，。,.\n]{2,6})'
-        locations = re.findall(location_pattern, content)
+        locations = self._TIME_LOCATION_PATTERN.findall(content)
 
         if time_span_days > 0 and len(locations) >= 2:
             has_travel_justification = any(kw in content for kw in [

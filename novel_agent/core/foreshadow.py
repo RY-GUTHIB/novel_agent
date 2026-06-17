@@ -15,6 +15,13 @@ from pathlib import Path
 from typing import List
 from dataclasses import asdict
 from .models import Foreshadow
+from .file_utils import atomic_write_json, atomic_write_text
+
+# 预编译正则
+_FS_PATTERN = re.compile(r'\[FS[：:]\s*(.*?)\s*\]')
+_FS_CLEAN = re.compile(r'^FS[：:]\s*')
+_FS_RESOLVE_PATTERN = re.compile(r'\[FS_RESOLVE[：:]\s*(FS_\d+)\s*\]')
+_FS_KEYWORD_PATTERN = re.compile(r'[一-龥]{3,10}')
 
 
 class ForeshadowTracker:
@@ -43,8 +50,7 @@ class ForeshadowTracker:
 
     def _save(self):
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.data_dir / "foreshadow.json", "w", encoding="utf-8") as f:
-            json.dump([asdict(fs) for fs in self.foreshadows], f, ensure_ascii=False, indent=2)
+        atomic_write_json(self.data_dir / "foreshadow.json", [asdict(fs) for fs in self.foreshadows])
 
     def plant(self, chapter: int, content: str, type: str = "mystery",
               related_characters: List[str] = None, related_items: List[str] = None,
@@ -61,10 +67,10 @@ class ForeshadowTracker:
 
     def add_manual_fs(self, chapter: int, fs_text: str, characters: List[str] = None) -> str:
         fs_text = fs_text.strip()
-        match = re.search(r'\[FS[：:]\s*(.*?)\s*\]', fs_text)
+        match = _FS_PATTERN.search(fs_text)
         if match:
             fs_text = match.group(1)
-        fs_text = re.sub(r'^FS[：:]\s*', '', fs_text)
+        fs_text = _FS_CLEAN.sub('', fs_text)
         return self.plant(chapter=chapter, content=fs_text, type="mystery",
                           related_characters=characters, planted_how="手动记录", importance=2)
 
@@ -96,7 +102,7 @@ class ForeshadowTracker:
         :return: 成功回收的伏笔数量
         """
         # 方式1：显式标记 [FS_RESOLVE: FS_xxx] → 自动回收
-        resolve_matches = re.findall(r'\[FS_RESOLVE[：:]\s*(FS_\d+)\s*\]', content)
+        resolve_matches = _FS_RESOLVE_PATTERN.findall(content)
         resolved_ids = set(resolve_matches)
         
         # 执行自动回收
@@ -117,7 +123,7 @@ class ForeshadowTracker:
         for fs in pending:
             if fs.id in resolved_ids:
                 continue
-            keywords = re.findall(r'[\u4e00-\u9fa5]{3,10}', fs.content)
+            keywords = _FS_KEYWORD_PATTERN.findall(fs.content)
             if not keywords:
                 continue
             kw_count = len(keywords)
@@ -261,6 +267,5 @@ class ForeshadowTracker:
             lines.append("")
 
         md_path = out_dir / "foreshadow_map.md"
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
+        atomic_write_text(md_path, "\n".join(lines))
         return str(md_path)

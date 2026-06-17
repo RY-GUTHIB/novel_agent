@@ -6,39 +6,69 @@ config.py - 全局配置
 
 import os
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+
+
+# ============ ProjectContext ============
+
+@dataclass
+class ProjectContext:
+    """项目上下文——所有项目相关的路径封装在此，显式传递给各服务。
+    替代原有的全局 DATA_DIR/OUTPUT_DIR 模块变量方案。"""
+    project_name: str
+    data_dir: Path
+    output_dir: Path
+    chapters_dir: Path = field(init=False)
+
+    def __post_init__(self):
+        self.chapters_dir = self.output_dir / "chapters"
+
+    @classmethod
+    def create(cls, project_name: str, base_dir: Path = None):
+        """从项目名创建 ProjectContext（自动创建目录）"""
+        root = base_dir or PROJECTS_ROOT
+        project_dir = root / project_name
+        data_dir = project_dir / "data"
+        output_dir = project_dir / "output"
+        chapters_dir = output_dir / "chapters"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        chapters_dir.mkdir(exist_ok=True)
+        return cls(project_name=project_name, data_dir=data_dir, output_dir=output_dir)
+
 
 # ============ 路径配置 ============
 BASE_DIR = Path(__file__).parent
 PROJECTS_ROOT = BASE_DIR / "projects"
 
-# 当前激活的项目名（None 表示未选中）
-_CURRENT_PROJECT = None
+# 当前激活的项目上下文
+_CURRENT_CTX: ProjectContext = None
 
 # 模块级路径变量（其他模块通过 config.DATA_DIR 访问，不要用 from import）
+# 读取 _CURRENT_CTX 的值，保持向后兼容
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "output"
 
 
-def set_project(project_name: str):
-    """切换当前项目，更新 DATA_DIR / OUTPUT_DIR（模块属性，兼容 import config 用法）"""
-    global _CURRENT_PROJECT, DATA_DIR, OUTPUT_DIR
-    _CURRENT_PROJECT = project_name
-    project_dir = PROJECTS_ROOT / project_name
-    data_dir = project_dir / "data"
-    output_dir = project_dir / "output"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "chapters").mkdir(exist_ok=True)
+def set_project(project_name: str) -> ProjectContext:
+    """切换当前项目，更新 DATA_DIR / OUTPUT_DIR 和 _CURRENT_CTX。
+    返回 ProjectContext 对象，可显式传递给各服务构造函数。"""
+    global _CURRENT_CTX, DATA_DIR, OUTPUT_DIR
+    ctx = ProjectContext.create(project_name)
+    _CURRENT_CTX = ctx
+    DATA_DIR = ctx.data_dir
+    OUTPUT_DIR = ctx.output_dir
+    return ctx
 
-    # 更新模块属性，使 config.DATA_DIR 拿到新值
-    mod = sys.modules[__name__]
-    mod.DATA_DIR = data_dir
-    mod.OUTPUT_DIR = output_dir
+
+def get_project_context() -> ProjectContext:
+    """获取当前项目上下文"""
+    return _CURRENT_CTX
 
 
 def get_project_name():
-    return _CURRENT_PROJECT
+    return _CURRENT_CTX.project_name if _CURRENT_CTX else None
 
 
 # ============ LLM 配置 ============

@@ -14,6 +14,7 @@ import config
 from pathlib import Path
 from typing import Dict, List
 from .models import TimelineEvent, CharacterLocation, LocationProfile
+from .file_utils import atomic_write_json
 
 
 class ContinuityGuard:
@@ -31,8 +32,7 @@ class ContinuityGuard:
 
     def _save_json(self, filename: str, data):
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.data_dir / filename, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        atomic_write_json(self.data_dir / filename, data)
 
     def _load_json(self, filename: str):
         path = self.data_dir / filename

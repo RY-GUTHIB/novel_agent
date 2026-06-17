@@ -3,7 +3,9 @@
 负责：列出所有小说项目、创建新项目、切换当前项目、读取/保存项目配置
 """
 import json
+import re
 import config
+from novel_agent.core.file_utils import atomic_write_json
 
 CONFIG_FILE = "config.json"
 
@@ -18,6 +20,10 @@ NOVEL_STYLES = [
     "轻松搞笑", "严肃史诗", "黑暗压抑", "热血激昂",
     "悬疑紧张", "文艺细腻", "快节奏爽文", "慢热深沉",
 ]
+
+
+# 项目名安全字符（中英文、数字、下划线、连字符）
+_VALID_PROJECT_NAME = re.compile(r'^[\w一-鿿-]+$')
 
 
 def ensure_projects_root():
@@ -57,12 +63,16 @@ def save_project_config(project_name: str, cfg: dict):
     project_dir = config.PROJECTS_ROOT / project_name
     project_dir.mkdir(parents=True, exist_ok=True)
     cfg_path = project_dir / CONFIG_FILE
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    atomic_write_json(cfg_path, cfg)
 
 
 def create_project(project_name: str, novel_type: str, style: str, concept: str):
     """创建新项目目录和初始配置"""
+    if not _VALID_PROJECT_NAME.match(project_name):
+        raise ValueError(
+            f"项目名包含非法字符: {project_name!r}\n"
+            f"项目名仅允许中英文、数字、下划线和连字符"
+        )
     ensure_projects_root()
     project_dir = config.PROJECTS_ROOT / project_name
     project_dir.mkdir(parents=True, exist_ok=True)

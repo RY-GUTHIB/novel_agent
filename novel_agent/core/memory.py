@@ -15,6 +15,7 @@ from .models import (
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
     ItemProfile, StyleProfile, TaskProfile,
 )
+from .file_utils import atomic_write_json
 
 
 class MemoryManager:
@@ -38,8 +39,7 @@ class MemoryManager:
 
     def _save_json(self, filename: str, data):
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.data_dir / filename, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        atomic_write_json(self.data_dir / filename, data)
 
     def _load_json(self, filename: str):
         path = self.data_dir / filename
@@ -723,8 +723,7 @@ class MemoryManager:
             "example_snippets": self.style.example_snippets,
             "notes": self.style.notes,
         }
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        atomic_write_json(path, data)
 
     # ========== 任务清单 ==========
 
