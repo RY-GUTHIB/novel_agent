@@ -108,7 +108,7 @@ try:
         print("  [FAIL] 大纲中没有第1章的信息")
         sys.exit(1)
 
-    chapter_1 = writer.write_chapter(
+    content, settings_json = writer.write_chapter(
         chapter=ch_info.get("chapter", 1),
         title=ch_info.get("title", ""),
         summary=ch_info.get("summary", ""),
@@ -116,9 +116,8 @@ try:
         location=ch_info.get("location", ""),
         characters=ch_info.get("characters", [])
     )
-    if chapter_1:
-        writer.save_chapter(1, ch_info.get("title", ""), chapter_1)
-        content = chapter_1
+    if content:
+        writer.save_chapter(1, ch_info.get("title", ""), content)
         print(f"  [OK] 第1章生成成功！字数: {len(content)}")
         print(f"  预览: {content[:100]}...")
 
@@ -137,7 +136,7 @@ except Exception as e:
 print("\n[3/6] 开始审校第1章...")
 try:
     reviewer = ReviewerAgent(memory, continuity, foreshadow)
-    review_result = reviewer.review_chapter(1, ch_info.get("title", ""), chapter_1)
+    review_result = reviewer.review_chapter(1, ch_info.get("title", ""), content)
     if review_result:
         passed = review_result.get("passed", False)
         score = review_result.get("overall_score", 0)

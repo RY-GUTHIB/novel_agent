@@ -98,7 +98,7 @@ def create_new_project() -> str:
     gen_outline = input("\n🤖 是否立即生成大纲？(Y/n)：").strip().lower()
     if gen_outline != "n":
         config.set_project(name)
-        memory, continuity, foreshadow = init_services()
+        memory, continuity, foreshadow, rag = init_services()
         check_api_key()
         generate_outline(memory, continuity, foreshadow, name, novel_type, style, concept)
 
@@ -154,15 +154,26 @@ def _input_concept() -> str:
 
 def init_services():
     """初始化所有服务（必须在 config.set_project() 之后调用）"""
-    return MemoryManager(), ContinuityGuard(), ForeshadowTracker()
+    from novel_agent.core.rag import RAGStore
+    return MemoryManager(), ContinuityGuard(), ForeshadowTracker(), RAGStore()
 
 
 def check_api_key():
-    if config.LLM_PROVIDER == "deepseek" and not config.DEEPSEEK_API_KEY:
-        print("❌ 错误：未配置 DEEPSEEK_API_KEY")
-        print("请在 novel_agent/config.py 中设置，或设置环境变量：")
-        print("  set DEEPSEEK_API_KEY=your-key-here")
-        sys.exit(1)
+    key_map = {
+        "deepseek": ("DEEPSEEK_API_KEY", config.DEEPSEEK_API_KEY),
+        "qwen": ("QWEN_API_KEY", config.QWEN_API_KEY),
+        "gemini": ("GEMINI_API_KEY", config.GEMINI_API_KEY),
+        "claude": ("CLAUDE_API_KEY", config.CLAUDE_API_KEY),
+        "volcengine": ("VOLCENGINE_API_KEY", config.VOLCENGINE_API_KEY),
+    }
+    provider = config.LLM_PROVIDER.lower()
+    if provider in key_map:
+        name, key = key_map[provider]
+        if not key:
+            print(f"❌ 错误：未配置 {name}")
+            print("请在 novel_agent/config.py 中设置，或设置环境变量：")
+            print(f"  set {name}=your-key-here")
+            sys.exit(1)
     print(f"✅ 使用模型：{config.LLM_PROVIDER}")
 
 
@@ -207,7 +218,7 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
                     old_dir.rename(new_dir)
                     set_current_project(title)
                     config.set_project(title)
-                    memory, continuity, foreshadow = init_services()
+                    memory, continuity, foreshadow, _ = init_services()
                     project_name = title
                     print(f"   ✅ 已重命名为「{title}」")
 
@@ -229,7 +240,7 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
 
 # =========== 命令实现 ===========
 
-def cmd_new(memory, continuity, foreshadow, project_name):
+def cmd_new(memory, continuity, foreshadow, rag, project_name):
     cfg = load_project_config(project_name)
     genre = cfg.get("type", "玄幻")
     style = cfg.get("style", "热血")
@@ -255,7 +266,7 @@ def cmd_new(memory, continuity, foreshadow, project_name):
     generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept)
 
 
-def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
+def cmd_write(memory, continuity, foreshadow, rag, project_name, chapter=None):
     outline_path = Path(config.DATA_DIR) / "outline.json"
     if not outline_path.exists():
         print("❌ 未找到大纲文件，请先运行：python main.py new")
@@ -293,7 +304,7 @@ def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
     print("\n🤖 正在生成，请稍候（约1-3分钟）...\n")
 
     meta = outline.get("meta", {})
-    writer = WriterAgent(memory, continuity, foreshadow,
+    writer = WriterAgent(memory, continuity, foreshadow, rag_store=rag,
                          genre=meta.get("genre", outline.get("genre", "玄幻")),
                          style=meta.get("style", outline.get("style", "热血")))
     reviewer = ReviewerAgent(memory, continuity, foreshadow)
@@ -337,12 +348,13 @@ def cmd_write(memory, continuity, foreshadow, project_name, chapter=None):
         content, settings_json = writer.write_chapter(chapter=chapter, title=title, summary=summary,
                                         time_tag=time_tag, location=location, characters=characters,
                                         logic_constraints=logic_constraints)
-        writer.save_chapter(chapter, title, content)
 
         # 审校循环
         content, settings_json = _review_loop(writer, reviewer, chapter, title, content, summary,
                                                time_tag, location, characters, settings_json,
                                                logic_constraints=logic_constraints)
+        # 审校结束后写最终版到磁盘（循环内不再写中间版本）
+        writer.save_chapter(chapter, title, content)
 
         update_project_progress(project_name, chapters_written=chapter)
         rebuild_novel_md(config.OUTPUT_DIR)
@@ -428,7 +440,6 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
             if patched:
                 content = patched
                 settings_json = None  # 定向修补不产生新设定
-                writer.save_chapter(chapter, title, content)
                 print("  定向修补完成，重新审校...")
                 prev_score = report["overall_score"]
                 continue
@@ -441,7 +452,6 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
             time_tag=time_tag, location=location, characters=characters,
             logic_constraints=logic_constraints,
         )
-        writer.save_chapter(chapter, title, content)
         print("  修订完成，重新审校...")
 
         prev_score = report["overall_score"]
@@ -455,7 +465,7 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
     return content, settings_json
 
 
-def cmd_review(memory, continuity, foreshadow, project_name):
+def cmd_review(memory, continuity, foreshadow, rag, project_name):
     existing = sorted(glob.glob(str(Path(config.OUTPUT_DIR) / "chapters" / "chapter_*.md")))
     if not existing:
         print("❌ 没有已生成的章节")
@@ -490,7 +500,7 @@ def cmd_review(memory, continuity, foreshadow, project_name):
         print(f"❌ 审校失败：{e}")
 
 
-def cmd_viz(memory, continuity, foreshadow, project_name):
+def cmd_viz(memory, continuity, foreshadow, rag, project_name):
     print("\n=== 生成可视化 ===")
     try:
         results = generate_all_visualizations(memory, continuity, project_name=project_name)
@@ -504,7 +514,7 @@ def cmd_viz(memory, continuity, foreshadow, project_name):
         print(f"❌ 可视化生成失败：{e}")
 
 
-def cmd_status(memory, continuity, foreshadow, project_name):
+def cmd_status(memory, continuity, foreshadow, rag, project_name):
     cfg = load_project_config(project_name)
     novel_title = _get_novel_title()
     print(f"\n=== 《{novel_title or project_name}》创作进度 ===")
@@ -538,7 +548,7 @@ def cmd_status(memory, continuity, foreshadow, project_name):
     print(f"地点数量：{len(memory.locations)} 个")
 
 
-def cmd_add_fs(memory, continuity, foreshadow, project_name):
+def cmd_add_fs(memory, continuity, foreshadow, rag, project_name):
     print("\n=== 手动添加伏笔 ===")
     chapter = input("埋下伏笔的章节号：").strip()
     try:
@@ -566,7 +576,7 @@ def cmd_add_fs(memory, continuity, foreshadow, project_name):
         print(f"❌ 添加失败：{e}")
 
 
-def cmd_fs_map(memory, continuity, foreshadow, project_name):
+def cmd_fs_map(memory, continuity, foreshadow, rag, project_name):
     try:
         path = foreshadow.export_to_markdown()
         print(f"\n✅ 伏笔总览已生成：{path}")
@@ -577,7 +587,7 @@ def cmd_fs_map(memory, continuity, foreshadow, project_name):
         print(f"❌ 生成失败：{e}")
 
 
-def cmd_resolve_fs(memory, continuity, foreshadow, project_name):
+def cmd_resolve_fs(memory, continuity, foreshadow, rag, project_name):
     print("\n=== 手动回收/放弃伏笔 ===")
     pending = foreshadow.get_pending()
     if not pending:
@@ -647,7 +657,7 @@ def cmd_list():
 
 def interactive_loop(project_name):
     config.set_project(project_name)
-    memory, continuity, foreshadow = init_services()
+    memory, continuity, foreshadow, rag = init_services()
 
     while True:
         print(f"\n📖 当前项目：《{project_name}》")
@@ -658,27 +668,27 @@ def interactive_loop(project_name):
             print("👋 再见！")
             break
         elif cmd == "write":
-            cmd_write(memory, continuity, foreshadow, project_name)
+            cmd_write(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "review":
-            cmd_review(memory, continuity, foreshadow, project_name)
+            cmd_review(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "viz":
-            cmd_viz(memory, continuity, foreshadow, project_name)
+            cmd_viz(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "status":
-            cmd_status(memory, continuity, foreshadow, project_name)
+            cmd_status(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "new":
-            cmd_new(memory, continuity, foreshadow, project_name)
+            cmd_new(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "add-fs":
-            cmd_add_fs(memory, continuity, foreshadow, project_name)
+            cmd_add_fs(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "resolve-fs":
-            cmd_resolve_fs(memory, continuity, foreshadow, project_name)
+            cmd_resolve_fs(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "fs-map":
-            cmd_fs_map(memory, continuity, foreshadow, project_name)
+            cmd_fs_map(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "switch":
             new_name = select_project()
             if new_name != project_name:
                 project_name = new_name
                 config.set_project(project_name)
-                memory, continuity, foreshadow = init_services()
+                memory, continuity, foreshadow, rag = init_services()
         elif cmd == "list":
             cmd_list()
         elif cmd == "help":

@@ -2,7 +2,7 @@
 from .models import (
     CharacterProfile, LocationProfile, WorldSetting,
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
-    RelationshipRecord, LocationProfile, TimelineEvent, CharacterLocation,
+    RelationshipRecord, TimelineEvent, CharacterLocation,
     Foreshadow,
 )
 from .memory import MemoryManager

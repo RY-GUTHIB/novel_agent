@@ -396,6 +396,9 @@ CHAPTER_WRITER_USER_PROMPT = """请创作第{chapter}章：{title}
 ## 上一章结尾内容（必须衔接）
 {prev_chapter_ending}
 
+## ⚠️ 前章全文参考（逐章阅读，确保本章情节与前三章无缝衔接，禁止与前文任何事实冲突）
+{prev_chapters_content}
+
 ## 全文风格锚点
 {style_prompt}
 
@@ -413,18 +416,6 @@ CHAPTER_WRITER_USER_PROMPT = """请创作第{chapter}章：{title}
 
 ## 势力/宗派档案
 {sect_factions}
-
-## 当前生效的剧情规则
-{plot_rules}
-
-## 角色已知信息
-{character_knowledge}
-
-## 人物关系详细记录
-{relationship_details}
-
-## 场景事件记录
-{scene_events}
 
 ## 伏笔提醒
 {foreshadow_prompt}
@@ -485,12 +476,24 @@ CHAPTER_WRITER_USER_PROMPT = """请创作第{chapter}章：{title}
 
 已有物品：{existing_items_text}
 
+### 11. 任务变化（⚠️ 必须回写）
+- 本章新增的任务（id、名称、描述、相关人物、相关物品）
+- 已有任务的状态更新（进度变化、完成等情况）
+- ⚠️ 如果本章角色接取了新任务、完成了旧任务，或任务有了重大进展，必须回写
+
+已有任务：{existing_tasks_text}
+
+### 12. 时间线事件（⚠️ 必须回写）
+- 本章中发生的标志性事件（每个主要场景至少一条）
+- 每个事件包含：时间标签、事件描述、涉及角色、发生地点、重要程度
+- ⚠️ 如果时间有跳跃（如"三日后""又过半月"），必须在 time_tag 中标注
+
 ## 输出格式
 
 正文最后一段结束后，另起一行输出：
 
 ===SETTINGS_JSON===
-{{"characters":[{{"name":"名","is_new":true,"updates":{{"gender":"性","age":"龄","appearance":"貌","personality":"性","background":"背","goals":"标","speaking_style":"语","abilities":[],"relationships":{{}},"relationship_contexts":{{"他人":{{"type":"关系类型","stance":"friendly/neutral/hostile/adversarial","met_chapter":0,"met_context":"认识场景","key_events":[]}}}},"status":"alive","notes":""}}}}],"world_settings":[{{"key":"设定名","value":"设定描述"}}],"sect_factions":[{{"name":"势力名","is_new":true,"updates":{{"type":"宗门","description":"描述","strength":"实力","hierarchy":[],"key_members":[],"allies":[],"enemies":[],"location":"","rules":[]}}}}],"locations":[{{"name":"地名","is_new":true,"updates":{{"description":"描述","type":"city","connected_to":[],"notable_characters":[]}}}}],"scene_events":[{{"location":"地名","scene":"开场/中段/结尾","event":"事件","characters":[],"importance":3}}],"spatial_movements":[{{"character":"人物","from_location":"A","to_location":"B","scene":"场景","travel_method":"方式","travel_time":"耗时","note":""}}],"spacemap_updates":[{{"from_location":"A","to_location":"B","travel_time":"时间","is_bidirectional":true}}],"plot_rules":[{{"condition":"条件","consequence":"结果","rule_text":"原文","source_character":"角色"}}],"character_knowledge":[{{"character":"角色","knowledge":"知道了什么","source":"怎么知道","detail":""}}],"items":[{{"name":"物品名","is_new":true,"updates":{{"type":"类型","description":"描述","first_giver":"赋予者","current_holder":"持有者","status":"active"}}}}]}}
+{{"characters":[{{"name":"名","is_new":true,"updates":{{"gender":"性","age":"龄","appearance":"貌","personality":"性","background":"背","goals":"标","speaking_style":"语","abilities":[],"relationships":{{}},"relationship_contexts":{{"他人":{{"type":"关系类型","stance":"friendly/neutral/hostile/adversarial","met_chapter":0,"met_context":"认识场景","key_events":[]}}}},"status":"alive","notes":""}}}}],"world_settings":[{{"key":"设定名","value":"设定描述"}}],"sect_factions":[{{"name":"势力名","is_new":true,"updates":{{"type":"宗门","description":"描述","strength":"实力","hierarchy":[],"key_members":[],"allies":[],"enemies":[],"location":"","rules":[]}}}}],"locations":[{{"name":"地名","is_new":true,"updates":{{"description":"描述","type":"city","connected_to":[],"notable_characters":[]}}}}],"scene_events":[{{"location":"地名","scene":"开场/中段/结尾","event":"事件","characters":[],"importance":3}}],"spatial_movements":[{{"character":"人物","from_location":"A","to_location":"B","scene":"场景","travel_method":"方式","travel_time":"耗时","note":""}}],"spacemap_updates":[{{"from_location":"A","to_location":"B","travel_time":"时间","is_bidirectional":true}}],"plot_rules":[{{"condition":"条件","consequence":"结果","rule_text":"原文","source_character":"角色"}}],"character_knowledge":[{{"character":"角色","knowledge":"知道了什么","source":"怎么知道","detail":""}}],"items":[{{"name":"物品名","is_new":true,"updates":{{"type":"类型","description":"描述","first_giver":"赋予者","current_holder":"持有者","status":"active"}}}}],"tasks":[{{"id":"任务ID","name":"任务名","description":"描述","status":"active/completed","progress":"当前进度","related_characters":[],"related_items":[]}}],"timeline_events":[{{"time_tag":"三日后/当天/五日后","event":"事件描述","characters":["人物"],"location":"地点","importance":2,"season":"秋"}}]}}
 
 如果某类没有新增，该字段输出空数组 []。
 
@@ -585,23 +588,8 @@ CHAPTER_REVISER_USER_PROMPT = """请修订第{chapter}章：{title}
 ## 势力/宗派档案
 {sect_factions}
 
-## 当前生效的剧情规则
-{plot_rules}
-
-## 角色已知信息
-{character_knowledge}
-
-## 人物关系详细记录
-{relationship_details}
-
-## 场景事件记录
-{scene_events}
-
 ## ⚠️ 当前世界状态快照（修订时必须逐条核对，正文不得与以下事实矛盾）
 {state_snapshot}
-
-## 伏笔提醒
-{foreshadow_prompt}
 
 请输出修订后的完整章节正文。"""
 
@@ -700,18 +688,6 @@ REVIEWER_USER_PROMPT = """请审校第{chapter}章：{title}
 
 ## 人物空间位置记录（前一章末尾位置）
 {spatial_context}
-
-## 当前生效的剧情规则
-{plot_rules}
-
-## 角色已知信息
-{character_knowledge}
-
-## 人物关系详细记录
-{relationship_details}
-
-## 场景事件记录
-{scene_events}
 
 ## 伏笔状态
 {foreshadow_summary}

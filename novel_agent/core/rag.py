@@ -11,6 +11,7 @@ RRF（Reciprocal Rank Fusion）融合排序，
 3. 检索维度：人物状态、地点描述、伏笔、时间线事件
 """
 
+import os
 import re
 import config
 from pathlib import Path
@@ -20,8 +21,12 @@ from typing import List, Dict
 class RAGStore:
     """ChromaDB 向量存储 + BM25 关键词检索封装"""
 
-    def __init__(self, persist_dir: str = None):
+    def __init__(self, persist_dir: str = None, model_cache_dir: str = None):
         self.persist_dir = str(Path(persist_dir or config.DATA_DIR) / "vector_db")
+        # 模型缓存目录（换电脑时只需复制此目录，避免重新下载）
+        model_cache = Path(model_cache_dir or config.DATA_DIR) / "models" / "sentence-transformers"
+        model_cache.mkdir(parents=True, exist_ok=True)
+        os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(model_cache)
         self._client = None
         self._collection = None
         # BM25 相关
@@ -35,13 +40,19 @@ class RAGStore:
             return
         try:
             import chromadb
+            from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
         except ImportError:
             raise ImportError("请先安装 chromadb: pip install chromadb>=0.5.0")
 
+        # 使用对中文支持更好的嵌入模型
+        self._embedding_fn = SentenceTransformerEmbeddingFunction(
+            model_name="BAAI/bge-small-zh-v1.5",
+        )
         self._client = chromadb.PersistentClient(path=self.persist_dir)
         self._collection = self._client.get_or_create_collection(
             name="novel_chunks",
             metadata={"hnsw:space": "cosine"},
+            embedding_function=self._embedding_fn,
         )
 
     def _init_bm25(self):
@@ -86,8 +97,23 @@ class RAGStore:
     def add_chapter(self, chapter_num: int, chapter_title: str, content: str):
         """
         将章节内容切片并存入向量库 + 更新 BM25 索引
+        同一章节多次调用会覆盖（先删旧 ID 再添加）
         """
         self._init_client()
+
+        # 先删同章节旧数据（覆盖写入）
+        try:
+            existing_ids = self._collection.get(
+                where={"chapter": chapter_num},
+                include=[],
+            )
+            if existing_ids and existing_ids.get("ids"):
+                self._collection.delete(ids=existing_ids["ids"])
+                # 标记 BM25 需要重建
+                self._bm25 = None
+        except Exception:
+            pass  # 首次写入无旧数据
+
         chunks = self._chunk_text(content)
         if not chunks:
             return
@@ -112,16 +138,29 @@ class RAGStore:
                 metadatas=metadatas[start:end],
             )
 
-        # 更新 BM25 索引（增量：追加新文档）
-        self._bm25_docs.extend(chunks)
-        self._bm25_metas.extend(metadatas)
-        # 重建 BM25（rank_bm25 不支持增量，但文档量不大时可接受）
-        try:
-            from rank_bm25 import BM25Okapi
-            tokenized = [self._tokenize(d) for d in self._bm25_docs]
-            self._bm25 = BM25Okapi(tokenized)
-        except ImportError:
-            pass
+        # 更新 BM25 索引
+        if self._bm25 is None:
+            # 覆盖写入后，从全量集合重建 BM25
+            try:
+                all_data = self._collection.get()
+                if all_data and all_data.get("documents"):
+                    self._bm25_docs = list(all_data["documents"])
+                    self._bm25_metas = list(all_data["metadatas"]) if all_data.get("metadatas") else []
+                    from rank_bm25 import BM25Okapi
+                    tokenized = [self._tokenize(d) for d in self._bm25_docs]
+                    self._bm25 = BM25Okapi(tokenized)
+            except ImportError:
+                pass
+        else:
+            # 增量追加
+            self._bm25_docs.extend(chunks)
+            self._bm25_metas.extend(metadatas)
+            try:
+                from rank_bm25 import BM25Okapi
+                tokenized = [self._tokenize(d) for d in self._bm25_docs]
+                self._bm25 = BM25Okapi(tokenized)
+            except ImportError:
+                pass
 
     def add_outline_entry(self, entry_type: str, title: str, content: str):
         """存储大纲/设定条目（同时更新 BM25 索引）"""

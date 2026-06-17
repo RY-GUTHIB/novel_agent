@@ -73,7 +73,7 @@ def main():
         project_name = select_project()
 
     config.set_project(project_name)
-    memory, continuity, foreshadow = init_services()
+    memory, continuity, foreshadow, rag = init_services()
 
     if command == "write":
         ch = None
@@ -83,13 +83,13 @@ def main():
                 ch = int(sys.argv[idx + 1])
             except (IndexError, ValueError):
                 pass
-        cmd_write(memory, continuity, foreshadow, project_name, chapter=ch)
+        cmd_write(memory, continuity, foreshadow, rag, project_name, chapter=ch)
     elif command == "review":
-        cmd_review(memory, continuity, foreshadow, project_name)
+        cmd_review(memory, continuity, foreshadow, rag, project_name)
     elif command == "viz":
-        cmd_viz(memory, continuity, foreshadow, project_name)
+        cmd_viz(memory, continuity, foreshadow, rag, project_name)
     elif command == "status":
-        cmd_status(memory, continuity, foreshadow, project_name)
+        cmd_status(memory, continuity, foreshadow, rag, project_name)
     elif command == "add-fs":
         if "--chapter" in sys.argv and "--content" in sys.argv:
             idx_ch = sys.argv.index("--chapter")
@@ -107,11 +107,11 @@ def main():
             except (IndexError, ValueError) as e:
                 print(f"❌ 参数错误：{e}")
         else:
-            cmd_add_fs(memory, continuity, foreshadow, project_name)
+            cmd_add_fs(memory, continuity, foreshadow, rag, project_name)
     elif command == "resolve-fs":
-        cmd_resolve_fs(memory, continuity, foreshadow, project_name)
+        cmd_resolve_fs(memory, continuity, foreshadow, rag, project_name)
     elif command == "fs-map":
-        cmd_fs_map(memory, continuity, foreshadow, project_name)
+        cmd_fs_map(memory, continuity, foreshadow, rag, project_name)
     else:
         print(f"❌ 未知命令：{command}")
         print("可用命令：new, write, review, viz, status, add-fs, resolve-fs, fs-map, list")

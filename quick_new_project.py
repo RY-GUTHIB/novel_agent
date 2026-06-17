@@ -69,7 +69,7 @@ def main():
     print("   （这可能需要几分钟，请耐心等待）")
 
     check_api_key()
-    memory, continuity, foreshadow = init_services()
+    memory, continuity, foreshadow, _ = init_services()
     generate_outline(memory, continuity, foreshadow, name, novel_type, style, concept)
     print("\n✅ 大纲生成完成！可以运行：python main.py write 开始写作")
 

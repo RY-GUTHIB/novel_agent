@@ -52,7 +52,7 @@ print(f"  章节: {len(outline.get('chapter_plan', []))}  人物: {len(outline.g
 print("\n[2/5] 写第1章...")
 writer = WriterAgent(memory, continuity, foreshadow, genre=TEST_GENRE, style=TEST_STYLE)
 ch_info = next((c for c in outline.get("chapter_plan", []) if c.get("chapter") == 1), None)
-content = writer.write_chapter(
+content, settings_json = writer.write_chapter(
     chapter=1,
     title=ch_info.get("title", ""),
     summary=ch_info.get("summary", ""),

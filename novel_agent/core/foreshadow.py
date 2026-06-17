@@ -33,7 +33,13 @@ class ForeshadowTracker:
                 data = json.load(f)
             self.foreshadows = [Foreshadow(**d) for d in data]
             if self.foreshadows:
-                self._counter = max(int(fs.id.split("_")[1]) for fs in self.foreshadows)
+                nums = []
+                for fs in self.foreshadows:
+                    parts = fs.id.split("_")
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        nums.append(int(parts[1]))
+                if nums:
+                    self._counter = max(nums)
 
     def _save(self):
         self.data_dir.mkdir(parents=True, exist_ok=True)

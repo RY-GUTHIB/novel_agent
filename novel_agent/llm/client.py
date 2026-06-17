@@ -9,6 +9,7 @@ import time
 import json
 import re
 import logging
+from typing import Optional
 import config
 
 logger = logging.getLogger(__name__)
@@ -287,7 +288,7 @@ def parse_json(text: str) -> dict:
     return None
 
 
-def _extract_first_json_object(text: str) -> dict | None:
+def _extract_first_json_object(text: str) -> Optional[dict]:
     """用栈算法从文本中提取第一个完整闭合的 JSON 对象"""
     start = text.find('{')
     if start == -1:

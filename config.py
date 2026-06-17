@@ -69,7 +69,7 @@ CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 # 火山引擎方舟配置（备用，OpenAI 兼容接口）
 # 请勿使用 https://ark.cn-beijing.volces.com/api/v3 ：该 Base URL 不会消耗您的 Coding Plan 额度，而是会产生额外费用
-VOLCENGINE_API_KEY = os.getenv("VOLCENGINE_API_KEY", "ark-9c1b2f85-d6c7-4c7b-bf57-74754cfb8189-05cc6")
+VOLCENGINE_API_KEY = os.getenv("VOLCENGINE_API_KEY", "")
 VOLCENGINE_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
 VOLCENGINE_MODEL = "deepseek-v4-flash"  # 或 "doubao-1.5-pro-32k" 等
 

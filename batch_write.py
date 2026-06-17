@@ -46,7 +46,7 @@ def main():
 
     config.set_project(project_name)
     check_api_key()
-    memory, continuity, foreshadow = init_services()
+    memory, continuity, foreshadow, rag = init_services()
 
     chapters_dir = Path(config.OUTPUT_DIR) / "chapters"
 
@@ -75,7 +75,7 @@ def main():
         print(f"  第 {ch} 章")
         print(f"{'='*60}")
         try:
-            cmd_write(memory, continuity, foreshadow, project_name, chapter=ch)
+            cmd_write(memory, continuity, foreshadow, rag, project_name, chapter=ch)
         except Exception as e:
             print(f"❌ 第 {ch} 章生成失败：{e}")
             import traceback

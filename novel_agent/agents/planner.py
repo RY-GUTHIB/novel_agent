@@ -291,10 +291,11 @@ class PlannerAgent:
                     )
                     harvest_ch = fs_data.get("harvest_chapter")
                     if harvest_ch:
-                        # plant() 返回 str(fs_id)，需要通过 id 查找 Foreshadow 对象来设置 chapter_resolved
                         for fs in self.foreshadow.foreshadows:
                             if fs.id == fs_id:
                                 fs.chapter_resolved = harvest_ch
+                                fs.status = "resolved"
+                                fs.resolution = f"第{harvest_ch}章自动回收"
                                 break
 
             # 伏笔总量 > 30 时自动精简：仅保留跨卷伏笔 + 最近 2 卷的当卷伏笔

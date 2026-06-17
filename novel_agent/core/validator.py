@@ -35,10 +35,20 @@ class ContractValidator:
         self._hostile_keywords = ["敌", "仇", "杀", "恨", "怒目", "冷哼", "不屑", "嘲讽", "蔑视"]
         self._friendly_keywords = ["笑", "亲", "握", "拥", "温柔", "关切", "感激", "信任", "默契", "并肩"]
 
+    # 修为境界层级（从低到高）
+    CULTIVATION_TIERS = [
+        "凡人", "炼气", "筑基", "开光", "融合", "心动", "金丹", "元婴",
+        "化神", "炼虚", "合体", "大乘", "渡劫", "真仙", "金仙", "大罗金仙", "圣人",
+    ]
+
     def validate(self, content: str, chapter: int, characters: List[str],
-                  memory_mgr, foreshadow_tracker=None) -> List[ContractViolation]:
+                  memory_mgr, parsed_settings: dict = None,
+                  continuity_guard=None,
+                  foreshadow_tracker=None) -> List[ContractViolation]:
         """
         对生成的正文进行契约校验
+        :param parsed_settings: 可选的 SETTINGS_JSON 解析结果，用于物品/场景同地/修为校验
+        :param continuity_guard: 可选的 ContinuityGuard 实例，用于同地校验
         :return: 违反列表（空 = 无问题）
         """
         violations: List[ContractViolation] = []
@@ -49,6 +59,17 @@ class ContractValidator:
         self._check_plot_rules(content, chapter, memory_mgr, violations)
         self._check_spatial_teleport(content, chapter, characters, memory_mgr, violations)
         self._check_time_consistency(content, chapter, characters, memory_mgr, violations)
+
+        if parsed_settings:
+            self._check_item_consistency(parsed_settings, memory_mgr, violations)
+            self._check_destroyed_item(parsed_settings, memory_mgr, violations)
+            self._check_co_location(parsed_settings, continuity_guard, chapter, violations)
+            self._check_power_level(parsed_settings, memory_mgr, violations)
+            self._check_character_teleport_within_chapter(parsed_settings, violations)
+            self._check_shared_scene_knowledge(parsed_settings, memory_mgr, continuity_guard, violations)
+            self._check_season_transition(parsed_settings, continuity_guard, chapter, violations)
+            self._check_task_completion(parsed_settings, memory_mgr, content, chapter, violations)
+            self._check_personality_consistency(parsed_settings, memory_mgr, content, violations)
 
         return violations
 
@@ -224,6 +245,370 @@ class ContractValidator:
                     message=f"正文中提到 {len(locations_mentioned)} 个地点但未发现移动描写，可能存在瞬移",
                     evidence=f"地点：{', '.join(locations_mentioned[:3])}",
                 ))
+
+    # ========== 7. 物品一致性 ==========
+
+    def _check_item_consistency(self, parsed_settings: dict, mem, violations: List):
+        """检查 SETTINGS_JSON 中的物品变化是否与已存储的状态一致"""
+        items = parsed_settings.get("items", [])
+        if not items:
+            return
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name", "").strip()
+            if not name:
+                continue
+            updates = item.get("updates", {})
+            is_new = item.get("is_new", False)
+
+            stored_item = mem.items.get(name) if hasattr(mem, 'items') else None
+
+            if is_new:
+                # 新物品：检查是否已存在同名物品
+                if stored_item:
+                    first_giver = updates.get("first_giver", "")
+                    stored_giver = stored_item.first_giver
+                    if first_giver and stored_giver and first_giver != stored_giver:
+                        violations.append(ContractViolation(
+                            severity="高", category="物品",
+                            message=f"物品「{name}」已存在（原赋予者：{stored_giver}），但本章标记为 is_new 且有新的赋予者「{first_giver}」，可能重复创建",
+                        ))
+            else:
+                # 已有物品更新：检查 current_holder 变化是否合理
+                if stored_item:
+                    new_holder = updates.get("current_holder", "")
+                    old_holder = stored_item.current_holder
+                    if new_holder and old_holder and new_holder != old_holder:
+                        # 检测转移是否重复赠与
+                        if hasattr(stored_item, 'first_giver') and stored_item.first_giver:
+                            if new_holder == stored_item.first_giver:
+                                violations.append(ContractViolation(
+                                    severity="中", category="物品",
+                                    message=f"物品「{name}」已由 {stored_item.first_giver} 赠予 {old_holder}，但本章又回到 {new_holder} 手中，可能不合逻辑",
+                                ))
+
+    # ========== 8. 同地校验 ==========
+
+    def _check_co_location(self, parsed_settings: dict, continuity_guard, chapter: int, violations: List):
+        """检查 scene_events 中同场出现的角色是否处于兼容的位置"""
+        scene_events = parsed_settings.get("scene_events", [])
+        if not scene_events or not continuity_guard:
+            return
+        for event in scene_events:
+            if not isinstance(event, dict):
+                continue
+            location = event.get("location", "").strip()
+            chars = event.get("characters", [])
+            if len(chars) < 2 or not location:
+                continue
+            char_locations = {}
+            for c in chars:
+                loc = continuity_guard.get_character_location(c, chapter)
+                if loc:
+                    char_locations[c] = loc
+            if len(char_locations) < 2:
+                continue
+            locs = set(char_locations.values())
+            if len(locs) >= 2:
+                locations_detail = "、".join(f"{c}在{loc}" for c, loc in char_locations.items())
+                violations.append(ContractViolation(
+                    severity="中", category="空间",
+                    message=f"场景「{location}」中角色 {', '.join(chars)} 在 {locations_detail}，未全部对齐到同一地点",
+                    evidence=f"场景地点={location}，角色分散在 {', '.join(locs)}",
+                ))
+
+    # ========== 9. 修为校验 ==========
+
+    @staticmethod
+    def _parse_cultivation_level(cultivation: str) -> tuple:
+        """解析修为字符串为 (tier_index, layer) 元组，用于比较高低。
+        如 '炼气三层' -> (1, 3), '金丹' -> (5, 0)"""
+        if not cultivation:
+            return (-1, 0)
+        tier = -1
+        for i, t in enumerate(ContractValidator.CULTIVATION_TIERS):
+            if t in cultivation:
+                tier = i
+                break
+        # 提取层数（如 "三层"、"九重"）
+        layer_pattern = re.search(r'[第又]?([一二三四五六七八九零十百]+)[层重阶]', cultivation)
+        if layer_pattern:
+            layer_map = {
+                "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+                "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+                "零": 0,
+            }
+            layer_str = layer_pattern.group(1)
+            if layer_str in layer_map:
+                return (tier, layer_map[layer_str])
+            if len(layer_str) == 1:
+                return (tier, layer_map.get(layer_str, 0))
+        # 提取数字层数（如 "9层"、"3重"）
+        digit_pattern = re.search(r'(\d+)[层重阶]', cultivation)
+        if digit_pattern:
+            return (tier, int(digit_pattern.group(1)))
+        return (tier, 0)
+
+    def _check_power_level(self, parsed_settings: dict, mem, violations: List):
+        """检查 SETTINGS_JSON 中角色修为更新是否严格递增"""
+        characters = parsed_settings.get("characters", [])
+        if not characters:
+            return
+        for char_entry in characters:
+            if not isinstance(char_entry, dict):
+                continue
+            name = char_entry.get("name", "").strip()
+            updates = char_entry.get("updates", {})
+            new_cultivation = updates.get("cultivation", "")
+            if not new_cultivation:
+                continue
+            if name not in mem.characters:
+                continue
+            old_cultivation = mem.characters[name].cultivation
+            if not old_cultivation:
+                continue
+
+            old_tier, old_layer = self._parse_cultivation_level(old_cultivation)
+            new_tier, new_layer = self._parse_cultivation_level(new_cultivation)
+
+            if old_tier < 0 or new_tier < 0:
+                continue  # 无法解析，跳过
+
+            if new_tier < old_tier:
+                violations.append(ContractViolation(
+                    severity="高", category="状态",
+                    message=f"{name} 修为从「{old_cultivation}」变为「{new_cultivation}」，境界降低（{ContractValidator.CULTIVATION_TIERS[old_tier]}→{ContractValidator.CULTIVATION_TIERS[new_tier]}），违反境界递增规则",
+                    evidence=f"旧修为={old_cultivation}，新修为={new_cultivation}",
+                ))
+            elif new_tier == old_tier and old_layer > new_layer > 0:
+                violations.append(ContractViolation(
+                    severity="高", category="状态",
+                    message=f"{name} 修为从「{old_cultivation}」变为「{new_cultivation}」，同境界内层数降低（{old_layer}→{new_layer}层），违反境界递增规则",
+                    evidence=f"旧修为={old_cultivation}，新修为={new_cultivation}",
+                ))
+
+    # ========== 10. 同章分身检测 ==========
+
+    def _check_character_teleport_within_chapter(self, parsed_settings: dict, violations: List):
+        """检查同一章内角色在多个相距很远的地点出现但无移动记录"""
+        scene_events = parsed_settings.get("scene_events", [])
+        spatial_movements = parsed_settings.get("spatial_movements", [])
+        if not scene_events:
+            return
+
+        # 收集有移动记录的角色（每个角色最后出现的场景位置）
+        moved_chars = set()
+        for m in spatial_movements:
+            if isinstance(m, dict) and m.get("character"):
+                moved_chars.add(m["character"])
+
+        # 按角色分组所有场景
+        char_scenes: Dict[str, list] = {}
+        for event in scene_events:
+            if not isinstance(event, dict):
+                continue
+            location = event.get("location", "").strip()
+            chars = event.get("characters", [])
+            if not location or not chars:
+                continue
+            for c in chars:
+                if c not in char_scenes:
+                    char_scenes[c] = []
+                char_scenes[c].append(location)
+
+        for char_name, locs in char_scenes.items():
+            unique_locs = list(dict.fromkeys(locs))  # 去重但保持顺序
+            if len(unique_locs) >= 2:
+                if char_name not in moved_chars:
+                    violations.append(ContractViolation(
+                        severity="中", category="空间",
+                        message=f"「{char_name}」在本章出现在多个地点（{' → '.join(unique_locs)}），但 spatial_movements 中无移动记录，可能分身或瞬移",
+                        evidence=f"涉及地点：{', '.join(unique_locs)}",
+                    ))
+
+    # ========== 11. 已销毁/丢失物品复用检测 ==========
+
+    def _check_destroyed_item(self, parsed_settings: dict, mem, violations: List):
+        """检查 SETTINGS_JSON 中是否出现了已销毁/丢失的物品"""
+        items = parsed_settings.get("items", [])
+        if not items:
+            return
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name", "").strip()
+            if not name:
+                continue
+            updates = item.get("updates", {})
+            is_new = item.get("is_new", False)
+
+            stored_item = mem.items.get(name) if hasattr(mem, 'items') else None
+            if not stored_item:
+                continue
+
+            if stored_item.status in ("destroyed", "lost"):
+                if is_new:
+                    violations.append(ContractViolation(
+                        severity="高", category="物品",
+                        message=f"物品「{name}」已标记为 {stored_item.status}，但本章标记为 is_new，试图重新创建",
+                    ))
+                elif updates:
+                    violations.append(ContractViolation(
+                        severity="高", category="物品",
+                        message=f"物品「{name}」已标记为 {stored_item.status}，但本章尝试更新其状态（{', '.join(updates.keys())}），已销毁/丢失的物品不应再被操作",
+                    ))
+
+    # ========== 12. 共同出场遗忘检测 ==========
+
+    def _check_shared_scene_knowledge(self, parsed_settings: dict, mem, continuity_guard, violations: List):
+        """检查 scene_events 中同场出现的角色，是否已在关系记录中标记为认识"""
+        scene_events = parsed_settings.get("scene_events", [])
+        if not scene_events or not continuity_guard:
+            return
+        for event in scene_events:
+            if not isinstance(event, dict):
+                continue
+            chars = event.get("characters", [])
+            if len(chars) < 2:
+                continue
+            for i, a in enumerate(chars):
+                for b in chars[i+1:]:
+                    if a not in mem.characters or b not in mem.characters:
+                        continue
+                    detail = mem.characters[a].relationships_detail.get(b)
+                    if detail and detail.get("met_chapter", 0) > 0:
+                        continue  # 已在关系记录中
+                    # 检查反向关系
+                    detail_b = mem.characters[b].relationships_detail.get(a)
+                    if detail_b and detail_b.get("met_chapter", 0) > 0:
+                        continue
+                    # 检查是否在之前的场景事件中同时出现过
+                    has_shared_scene = False
+                    for prev_event in mem.scene_events:
+                        if a in prev_event.characters and b in prev_event.characters:
+                            has_shared_scene = True
+                            break
+                    if has_shared_scene:
+                        violations.append(ContractViolation(
+                            severity="中", category="关系",
+                            message=f"「{a}」和「{b}」此前已在同一场景中出现过（check scene_events），但关系记录中 met_chapter 缺失，后续可能表现互不认识",
+                            evidence=f"场景地点={event.get('location', '未知')}，同时出场角色={', '.join(chars)}",
+                        ))
+
+    # ========== 13. 跨章季节跳变检测 ==========
+
+    def _check_season_transition(self, parsed_settings: dict, continuity_guard, chapter: int, violations: List):
+        """检查 timeline_events 中季节是否跳变（无跨季过渡时警告）"""
+        if not continuity_guard or not hasattr(continuity_guard, 'timeline'):
+            return
+        timeline_events = parsed_settings.get("timeline_events", [])
+        if not timeline_events:
+            return
+        # 获取上一章的事件（取最新一条有 season 的）
+        prev_season = None
+        for e in continuity_guard.timeline:
+            if e.chapter < chapter and e.season:
+                prev_season = e.season
+        if not prev_season:
+            return
+        # 检查本章 timeline_events 中的季节
+        for evt in timeline_events:
+            if not isinstance(evt, dict):
+                continue
+            season = evt.get("season", "")
+            if not season:
+                continue
+            if season == prev_season:
+                continue
+            # 季节变了，检查 time_tag 是否有跨季过渡
+            time_tag = evt.get("time_tag", "")
+            cross_season_keywords = ["数月后", "半年", "一年", "次年", "来年", "转年", "冬去春来", "春去秋来",
+                                     "过了", "时光飞逝", "岁月如梭", "转眼", "翌年"]
+            has_transition = any(kw in (time_tag or "") for kw in cross_season_keywords)
+            if not has_transition:
+                violations.append(ContractViolation(
+                    severity="中", category="时间",
+                    message=f"上一章季节为「{prev_season}」，本章出现「{season}」季节特征，但 time_tag 中无跨季过渡描写（如「数月后」「次年春」）",
+                    evidence=f"time_tag={time_tag}，prev_season={prev_season}，new_season={season}",
+                ))
+
+    # ========== 14. 任务条件检测 ==========
+
+    def _check_task_completion(self, parsed_settings: dict, mem, content: str, chapter: int, violations: List):
+        """检查正文中是否出现了任务完成条件，但 SETTINGS_JSON 中任务状态未更新为 completed"""
+        # 获取活跃任务（仅 active，且当前章之前创建的）
+        if not hasattr(mem, 'tasks') or not mem.tasks:
+            return
+        tasks_from_settings = parsed_settings.get("tasks", [])
+        updated_task_ids = {t.get("id") for t in tasks_from_settings if isinstance(t, dict)}
+
+        for tid, task in mem.tasks.items():
+            if task.status != "active":
+                continue
+            if task.chapter_created >= chapter:
+                continue
+            # 如果已在 SETTINGS_JSON 中更新了，跳过
+            if tid in updated_task_ids:
+                continue
+            # 从任务描述中提取关键名词，检查正文是否提及
+            keywords = self._extract_keywords(task.description)
+            if not keywords:
+                continue
+            # 检查正文是否包含这些关键词
+            hit_count = sum(1 for kw in keywords if kw in content)
+            # 如果超过半数关键词出现在正文中，可能是条件已满足但未更新
+            if hit_count >= max(2, len(keywords) // 2):
+                violations.append(ContractViolation(
+                    severity="低", category="状态",
+                    message=f"任务「{task.name}」（{tid}）的关键条件（{', '.join(keywords[:3])}）在正文中出现{hit_count}次，但 SETTINGS_JSON 中未更新状态，可能条件已满足但忘记更新",
+                ))
+
+    # ========== 15. OOC（性格矛盾）检测 ==========
+
+    def _check_personality_consistency(self, parsed_settings: dict, mem, content: str, violations: List):
+        """检查 SETTINGS_JSON 中角色的行为是否符合其性格设定"""
+        characters = parsed_settings.get("characters", [])
+        if not characters:
+            return
+
+        # 性格→矛盾行为关键词映射
+        personality_contradictions = {
+            "吝啬": ["慷慨解囊", "一掷千金", "大方", "施舍", "散尽家财"],
+            "胆小": ["挺身而出", "悍不畏死", "冲锋在前", "毫不畏惧"],
+            "冷酷": ["心软", "不忍", "怜悯", "同情", "流泪"],
+            "暴躁": ["耐心", "忍气吞声", "和颜悦色", "温声细语"],
+            "狡猾": ["坦诚", "直言不讳", "和盘托出", "推心置腹"],
+            "懦弱": ["据理力争", "寸步不让", "针锋相对", "宁死不屈"],
+            "粗鲁": ["彬彬有礼", "温文尔雅", "恭敬有加", "礼节周到"],
+            "傲慢": ["低声下气", "卑躬屈膝", "虚心请教", "甘拜下风"],
+            "多疑": ["深信不疑", "毫无保留地信任", "完全相信"],
+            "优柔寡断": ["当机立断", "毫不犹豫", "斩钉截铁"],
+            "善良": ["见死不救", "滥杀无辜", "草菅人命", "冷眼旁观"],
+            "谨慎": ["鲁莽行事", "冒失", "轻举妄动", "不假思索"],
+        }
+
+        for char_entry in characters:
+            if not isinstance(char_entry, dict):
+                continue
+            name = char_entry.get("name", "").strip()
+            if not name or name not in mem.characters:
+                continue
+            personality = mem.characters[name].personality
+            if not personality:
+                continue
+
+            # 检测性格关键词
+            for trait, bad_actions in personality_contradictions.items():
+                if trait not in personality:
+                    continue
+                for action in bad_actions:
+                    if action in content:
+                        violations.append(ContractViolation(
+                            severity="中", category="关系",
+                            message=f"「{name}」性格为「{personality}」，但本章正文出现「{action}」行为，可能违反人物设定",
+                            evidence=f"性格={personality}，矛盾行为={action}",
+                        ))
 
     # ========== 6. 时间一致性 ==========
 

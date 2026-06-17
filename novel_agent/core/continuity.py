@@ -24,6 +24,7 @@ class ContinuityGuard:
         self.timeline: List[TimelineEvent] = []
         self.spacemap: Dict[str, LocationProfile] = {}
         self.character_locations: List[CharacterLocation] = []
+        self.absolute_day: float = 0  # 故事已过天数（累计）
         self._load_all()
 
     # ========== JSON 工具 ==========
@@ -46,11 +47,13 @@ class ContinuityGuard:
         self._load_timeline()
         self._load_spacemap()
         self._load_character_locations()
+        self._load_absolute_day()
 
     def save_all(self):
         self._save_timeline()
         self._save_spacemap()
         self._save_character_locations()
+        self._save_absolute_day()
 
     # ========== 时间线 ==========
 
@@ -70,22 +73,80 @@ class ContinuityGuard:
             if c_clean and c_clean not in cleaned_chars:
                 cleaned_chars.append(c_clean)
 
-        existing_idx = next((i for i, e in enumerate(self.timeline) if e.chapter == chapter), None)
         new_event = TimelineEvent(
             chapter=chapter, time_tag=time_tag, event=event,
             characters=cleaned_chars, location=location, importance=importance,
         )
-        if existing_idx is not None:
-            self.timeline[existing_idx] = new_event
-        else:
-            self.timeline.append(new_event)
+        self.timeline.append(new_event)
         self._save_timeline()
+
+        # 累计时间轴：只在每章第一条事件时更新
+        chapter_events = [e for e in self.timeline if e.chapter == chapter]
+        if len(chapter_events) == 1:
+            self.update_absolute_day(time_tag)
 
     def get_events_for_chapter(self, chapter: int) -> List[TimelineEvent]:
         return [e for e in self.timeline if e.chapter == chapter]
 
     def get_events_for_character(self, character: str) -> List[TimelineEvent]:
         return [e for e in self.timeline if character in e.characters]
+
+    # ========== 累计时间轴 ==========
+
+    def _save_absolute_day(self):
+        self._save_json("absolute_day.json", self.absolute_day)
+
+    def _load_absolute_day(self):
+        path = self.data_dir / "absolute_day.json"
+        if path.exists():
+            try:
+                self.absolute_day = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(self.absolute_day, (int, float)):
+                    self.absolute_day = 0
+            except (json.JSONDecodeError, ValueError, IOError, OSError):
+                self.absolute_day = 0
+        else:
+            self.absolute_day = 0
+
+    @staticmethod
+    def _parse_time_elapsed(time_tag: str) -> float:
+        """从 time_tag 解析与上一章的时间间隔（天数），用于累计时间轴"""
+        if not time_tag:
+            return 0
+        # "三日后""三日后"
+        m = re.search(r'([一二三四五六七八九十百零\d]+)\s*[日天]后', time_tag)
+        if m:
+            num_str = m.group(1)
+            if num_str.isdigit():
+                return float(num_str)
+            cn_map = {"一":1,"二":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10,"百":100,"零":0}
+            total = 0
+            for ch in num_str:
+                total += cn_map.get(ch, 0)
+            return float(total) if total else 0
+        # "半日后""半日"
+        if '半' in time_tag:
+            return 0.5
+        # "翌日""次日""第二天"
+        if any(kw in time_tag for kw in ["翌日", "次日", "第二天"]):
+            return 1
+        # "一个时辰后""两个时辰"
+        m = re.search(r'([一二三四五六七八九十百零\d]+)\s*个?时辰', time_tag)
+        if m:
+            num_str = m.group(1)
+            n = int(num_str) if num_str.isdigit() else 1
+            return n * 0.125  # 1时辰≈2小时≈0.125天
+        # "片刻""少顷" — 忽略
+        if any(kw in time_tag for kw in ["片刻", "少顷", "须臾", "弹指"]):
+            return 0.01
+        return 0
+
+    def update_absolute_day(self, time_tag: str):
+        """根据本章 time_tag 更新累计天数"""
+        elapsed = self._parse_time_elapsed(time_tag)
+        if elapsed > 0:
+            self.absolute_day += elapsed
+            self._save_absolute_day()
 
     # ========== 空间 ==========
 
@@ -170,6 +231,10 @@ class ContinuityGuard:
                                     plot_rules_text: str = "",
                                     character_knowledge_text: str = "") -> str:
         lines = ["【前文连续性摘要（生成本章必读）】"]
+
+        if self.absolute_day > 0:
+            lines.append(f"\n⏱️ 故事已过：约 {self.absolute_day:.1f} 天")
+            lines.append("  （如果本章涉及时间跳跃，请在 time_tag 中标注，如「三日后」「又过半月」）")
 
         recent_events = [e for e in self.timeline if chapter - 3 <= e.chapter < chapter]
         if recent_events:

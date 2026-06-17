@@ -195,9 +195,12 @@ class WriterAgent:
         existing_loc_text = ", ".join(sorted(self.memory.locations.keys())) if self.memory.locations else "（无）"
         existing_sect_text = ", ".join(sorted(self.memory.sect_factions.keys())) if self.memory.sect_factions else "（无）"
         existing_items_text = ", ".join(sorted(self.memory.items.keys())) if self.memory.items else "（无）"
+        existing_tasks_text = self._build_existing_tasks_text()
 
         # 上一章结尾钩子
         prev_chapter_ending = self._get_prev_chapter_ending(chapter)
+        # 前章全文参考
+        prev_chapters_content = self._get_prev_chapters_content(chapter)
         # 风格锚点
         style_prompt = self.memory.get_style_prompt()
         # 逻辑约束（来自 LogicGuard，纯规则）
@@ -213,16 +216,13 @@ class WriterAgent:
             time_tag=time_tag, location=location, characters="、".join(characters),
             generation_contract=generation_contract,
             prev_chapter_ending=prev_chapter_ending,
+            prev_chapters_content=prev_chapters_content,
             style_prompt=style_prompt,
             logic_constraints=logic_constraints,
             continuity_prompt=continuity_prompt,
             character_prompts=character_prompts or "（无）",
             world_settings=self.memory.get_world_settings_prompt(),
             sect_factions=self.memory.get_sect_factions_prompt(),
-            plot_rules=self.memory.get_active_rules_prompt(),
-            character_knowledge=self.memory.get_character_knowledge_prompt(chapter=chapter),
-            relationship_details=self.memory.get_all_relationships_prompt(),
-            scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
             foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
             rag_context=rag_context,
             state_snapshot=state_snapshot,
@@ -231,10 +231,21 @@ class WriterAgent:
             existing_loc_text=existing_loc_text,
             existing_sect_text=existing_sect_text,
             existing_items_text=existing_items_text,
+            existing_tasks_text=existing_tasks_text,
             rhythm=self._get_rhythm_for_chapter(chapter),
             beat_type=self._get_beat_type_for_chapter(chapter),
             hook_type=self._get_hook_type_for_chapter(chapter),
         )
+
+    def _build_existing_tasks_text(self) -> str:
+        tasks = self.memory.get_active_tasks()
+        if not tasks:
+            return "（无）"
+        lines = []
+        for t in tasks:
+            status_icon = "✅" if t.status == "completed" else "🔄" if t.status == "active" else "⏳"
+            lines.append(f"- {status_icon} {t.id}：{t.name}（{t.status}，进度：{t.progress}）")
+        return "\n".join(lines)
 
     def _get_prev_chapter_ending(self, chapter: int) -> str:
         """读取上一章最后 200 字，用于钩子衔接"""
@@ -250,6 +261,34 @@ class WriterAgent:
             ending = text[-200:] if len(text) > 200 else text
             return f"（上一章结尾：...{ending.strip()}）"
         return "（上一章文件不存在）"
+
+    def _get_prev_chapters_content(self, chapter: int, max_chapters: int = 3, max_chars_per: int = 3000) -> str:
+        """读取前 N 章内容，用于写作参考（过渡自然 + 防上下文冲突）"""
+        if chapter <= 1:
+            return "（这是第一章，无前章内容）"
+        out_dir = Path(config.OUTPUT_DIR) / "chapters"
+        parts = []
+        for i in range(1, max_chapters + 1):
+            prev = chapter - i
+            if prev < 1:
+                break
+            prev_path = out_dir / f"chapter_{prev:03d}.md"
+            if not prev_path.exists():
+                continue
+            text = self.load_chapter(prev)
+            if not text:
+                continue
+            # 去掉 Markdown 标题行（第X章 XXX）
+            content_only = re.sub(r'^# .+?\n', '', text, count=1).strip()
+            # 截断超长章节，保留首尾关键内容
+            if len(content_only) > max_chars_per:
+                head = content_only[:max_chars_per // 2]
+                tail = content_only[-(max_chars_per // 2):]
+                content_only = head + "\n\n...（中间省略）...\n\n" + tail
+            parts.append(f"### 第{prev}章\n{content_only}")
+        if not parts:
+            return "（前章文件不存在）"
+        return "\n\n---\n\n".join(parts)
 
     def _build_char_summary(self, characters: list) -> str:
         """构建已有人物摘要（用于设定提取上下文）"""
@@ -322,27 +361,6 @@ class WriterAgent:
         idx = (chapter - 1) % len(self._HOOK_TYPES)
         return self._HOOK_TYPES[idx]
 
-    # ========== 伏笔公开接口（供 CLI 调用）==========
-
-    def finalize_foreshadows(self, content: str, chapter: int, characters: list):
-        """审校通过后，从最终版本正文提取伏笔并自动回收（公开方法）"""
-        new_fs = self._extract_foreshadows(content, chapter)
-        for fs_content in new_fs:
-            self.foreshadow.plant(chapter=chapter, content=fs_content, type="mystery",
-                                  related_characters=characters, importance=2)
-        resolved_count = self.foreshadow.auto_resolve(content, chapter)
-        if resolved_count:
-            print(f"  [伏笔回收] 自动回收 {resolved_count} 个伏笔")
-        if new_fs:
-            print(f"  [伏笔提取] 提取 {len(new_fs)} 个新伏笔")
-            for fs in new_fs:
-                print(f"    - {fs[:50]}...")
-        self.foreshadow._save()
-        try:
-            self.foreshadow.export_to_markdown()
-        except (IOError, OSError) as e:
-            print(f"  [WARN] 伏笔总览导出失败: {e}")
-
     def _build_reviser_user_prompt(self, chapter, title, review_report, original_content,
                                      summary, time_tag, location, characters,
                                      generation_contract, logic_constraints: str = "") -> str:
@@ -375,11 +393,6 @@ class WriterAgent:
             character_prompts=character_prompts or "（无）",
             world_settings=self.memory.get_world_settings_prompt(),
             sect_factions=self.memory.get_sect_factions_prompt(),
-            plot_rules=self.memory.get_active_rules_prompt(),
-            character_knowledge=self.memory.get_character_knowledge_prompt(chapter=chapter),
-            relationship_details=self.memory.get_all_relationships_prompt(),
-            scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
-            foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
             state_snapshot=state_snapshot,
         )
 
@@ -444,7 +457,18 @@ class WriterAgent:
         以后有新的设定回写需求，统一加在这个方法里。
         """
         # 0. 契约校验（最终版本校验）
-        violations = self.validator.validate(content, chapter, characters, self.memory)
+        parsed = None
+        if settings_json:
+            try:
+                parsed = json.loads(settings_json) if isinstance(settings_json, str) else settings_json
+            except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+                print(f"  [WARN] 设定 JSON 解析失败，契约校验跳过设定检查: {e}")
+
+        violations = self.validator.validate(
+            content, chapter, characters, self.memory,
+            parsed_settings=parsed if isinstance(parsed, dict) else None,
+            continuity_guard=self.continuity,
+        )
         if violations:
             report = format_violations_report(violations)
             print(f"\n{report}")
@@ -453,13 +477,8 @@ class WriterAgent:
                 print(f"  ⚠️ 最终版本仍有 {high_count} 个高严重性契约违反，已记录但继续回写")
 
         # 1. 应用所有设定（人物/物品/位置/势力/世界设定/场景事件）
-        if settings_json:
-            try:
-                parsed = json.loads(settings_json) if isinstance(settings_json, str) else settings_json
-                if parsed:
-                    self._apply_all_settings(parsed, chapter)
-            except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
-                print(f"  [WARN] 设定回写失败: {e}")
+        if parsed and isinstance(parsed, dict):
+            self._apply_all_settings(parsed, chapter)
 
         # 2. 连续性更新
         self.continuity.add_event(chapter=chapter, time_tag=time_tag, event=summary,
@@ -568,6 +587,7 @@ class WriterAgent:
             self._apply_scene_events(parsed.get("scene_events", []), chapter)
             self._apply_items(parsed.get("items", []), chapter)
             self._apply_tasks(parsed.get("tasks", []), chapter)
+            self._apply_timeline_events(parsed.get("timeline_events", []), chapter)
             self._apply_style(parsed.get("style", {}))
         except (KeyError, ValueError, TypeError, AttributeError) as e:
             print(f"  [WARN] 设定回写失败: {e}")
@@ -938,6 +958,27 @@ class WriterAgent:
             if updated_count:
                 parts.append(f"更新 {updated_count} 个任务")
             print(f"  [设定提取·任务] {', '.join(parts)}")
+
+    def _apply_timeline_events(self, events: list, chapter: int):
+        """应用时间线事件（从 SETTINGS_JSON 的 timeline_events 字段）"""
+        count = 0
+        for evt in events:
+            if not isinstance(evt, dict):
+                continue
+            time_tag = evt.get("time_tag", "")
+            event_desc = evt.get("event", "").strip()
+            if not event_desc:
+                continue
+            chars = evt.get("characters", [])
+            loc = evt.get("location", "")
+            importance = evt.get("importance", 1)
+            self.continuity.add_event(
+                chapter=chapter, time_tag=time_tag, event=event_desc,
+                characters=chars, location=loc, importance=importance,
+            )
+            count += 1
+        if count:
+            print(f"  [设定提取·时间线] 新增 {count} 个时间线事件")
 
     # ========== JSON 解析工具 ==========
 

@@ -266,7 +266,7 @@ class SpacetimeGuard:
                 return self._parse_time_value(e.time_tag)
         return None
 
-    def _parse_travel_days(self, travel_time: str) -> Optional[int]:
+    def _parse_travel_days(self, travel_time: str) -> Optional[float]:
         """解析通行时间字符串为天数"""
         travel_time = travel_time.strip()
         # "2日" / "2天"
@@ -275,11 +275,11 @@ class SpacetimeGuard:
             return int(m.group(1))
         # "半日"
         if '半日' in travel_time or '半天' in travel_time:
-            return 1
+            return 0.5
         # "1时辰" ≈ 2小时 ≈ 0.25日
         m = re.match(r'(\d+)\s*时辰', travel_time)
         if m:
-            return max(1, int(m.group(1)) // 4)  # 4时辰≈1日
+            return 0.5
         # "3日骑马" → 3
         m = re.match(r'(\d+)', travel_time)
         if m:
