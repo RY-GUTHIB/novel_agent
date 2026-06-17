@@ -113,33 +113,43 @@ class ContinuityGuard:
         """从 time_tag 解析与上一章的时间间隔（天数），用于累计时间轴"""
         if not time_tag:
             return 0
-        # "三日后""三日后"
+        # "三日后""3日后"
         m = re.search(r'([一二三四五六七八九十百零\d]+)\s*[日天]后', time_tag)
         if m:
-            num_str = m.group(1)
-            if num_str.isdigit():
-                return float(num_str)
-            cn_map = {"一":1,"二":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10,"百":100,"零":0}
-            total = 0
-            for ch in num_str:
-                total += cn_map.get(ch, 0)
-            return float(total) if total else 0
-        # "半日后""半日"
+            return ContinuityGuard._parse_chinese_number(m.group(1))
+        # "2日""3日骑马"（裸数字+日/天）
+        m = re.match(r'(\d+)\s*[日天]', time_tag.strip())
+        if m:
+            return float(m.group(1))
+        # "半日后""半日""半天"
         if '半' in time_tag:
             return 0.5
         # "翌日""次日""第二天"
         if any(kw in time_tag for kw in ["翌日", "次日", "第二天"]):
             return 1
-        # "一个时辰后""两个时辰"
+        # "一个时辰后""两个时辰""3时辰"
         m = re.search(r'([一二三四五六七八九十百零\d]+)\s*个?时辰', time_tag)
         if m:
-            num_str = m.group(1)
-            n = int(num_str) if num_str.isdigit() else 1
-            return n * 0.125  # 1时辰≈2小时≈0.125天
+            return ContinuityGuard._parse_chinese_number(m.group(1)) * 0.125
         # "片刻""少顷" — 忽略
         if any(kw in time_tag for kw in ["片刻", "少顷", "须臾", "弹指"]):
             return 0.01
+        # "3日骑马" → 3（兜底数字提取）
+        m = re.match(r'(\d+)', time_tag.strip())
+        if m:
+            return float(m.group(1))
         return 0
+
+    @staticmethod
+    def _parse_chinese_number(num_str: str) -> float:
+        """解析中文数字/阿拉伯数字为 float"""
+        if num_str.isdigit():
+            return float(num_str)
+        cn_map = {"一":1,"二":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10,"百":100,"零":0}
+        total = 0
+        for ch in num_str:
+            total += cn_map.get(ch, 0)
+        return float(total) if total else 0
 
     def update_absolute_day(self, time_tag: str):
         """根据本章 time_tag 更新累计天数"""

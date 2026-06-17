@@ -276,10 +276,10 @@ class SpacetimeGuard:
         # "半日"
         if '半日' in travel_time or '半天' in travel_time:
             return 0.5
-        # "1时辰" ≈ 2小时 ≈ 0.25日
+        # "1时辰" ≈ 2小时 ≈ 0.125日
         m = re.match(r'(\d+)\s*时辰', travel_time)
         if m:
-            return 0.5
+            return int(m.group(1)) * 0.125
         # "3日骑马" → 3
         m = re.match(r'(\d+)', travel_time)
         if m:
@@ -419,10 +419,8 @@ class SpacetimeGuard:
         return SpacetimeGuard._format_travel_days(days)
 
     @staticmethod
-    def _parse_travel_days_static(travel_time: str) -> Optional[int]:
-        """与 _parse_travel_days 相同的逻辑，静态版本供 auto_fix 使用。
-        但"半日"返回 0.5 而非 1，以便更精确地估算平均通行时间。
-        """
+    def _parse_travel_days_static(travel_time: str) -> Optional[float]:
+        """与 _parse_travel_days 相同的逻辑，静态版本供 auto_fix 使用"""
         travel_time = travel_time.strip()
         m = re.match(r'(\d+)\s*[日天]', travel_time)
         if m:
@@ -431,7 +429,7 @@ class SpacetimeGuard:
             return 0.5
         m = re.match(r'(\d+)\s*时辰', travel_time)
         if m:
-            return 0.5
+            return int(m.group(1)) * 0.125
         m = re.match(r'(\d+)', travel_time)
         if m:
             return int(m.group(1))

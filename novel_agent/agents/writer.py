@@ -18,7 +18,8 @@ from novel_agent.llm.client import generate, parse_json, parse_json_array
 from novel_agent.core.models import (
     CharacterProfile, LocationProfile, WorldSetting,
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
-    ItemProfile, TaskProfile,
+    ItemProfile, TaskProfile, SettingsSchema, validate_settings_json,
+    generate_settings_json_example,
 )
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
@@ -66,6 +67,7 @@ class WriterAgent:
         # 2. 构建 prompt
         system_prompt = CHAPTER_WRITER_SYSTEM_PROMPT.format(
             genre=self.genre, style=self.style, word_target=config.CHAPTER_WORD_TARGET,
+            settings_json_example=generate_settings_json_example(),
         )
         user_prompt = self._build_writer_user_prompt(
             chapter, title, summary, time_tag, location, characters, generation_contract,
@@ -232,6 +234,7 @@ class WriterAgent:
             existing_sect_text=existing_sect_text,
             existing_items_text=existing_items_text,
             existing_tasks_text=existing_tasks_text,
+            settings_json_example=generate_settings_json_example(),
             rhythm=self._get_rhythm_for_chapter(chapter),
             beat_type=self._get_beat_type_for_chapter(chapter),
             hook_type=self._get_hook_type_for_chapter(chapter),
@@ -464,6 +467,12 @@ class WriterAgent:
             except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
                 print(f"  [WARN] 设定 JSON 解析失败，契约校验跳过设定检查: {e}")
 
+        # 校验 SETTINGS_JSON schema 完整性（检查 LLM 输出是否遗漏字段）
+        if isinstance(parsed, dict):
+            missing = validate_settings_json(parsed)
+            if missing:
+                print(f"  [WARN] SETTINGS_JSON 缺少 {len(missing)} 个字段: {', '.join(missing)}，缺失字段将回退默认值")
+
         violations = self.validator.validate(
             content, chapter, characters, self.memory,
             parsed_settings=parsed if isinstance(parsed, dict) else None,
@@ -483,7 +492,17 @@ class WriterAgent:
         # 2. 连续性更新
         self.continuity.add_event(chapter=chapter, time_tag=time_tag, event=summary,
                                   characters=characters, location=location, importance=3)
+
+        # 收集已有精确位置的角色（来自 SETTINGS_JSON 的 spatial_movements）
+        moved_chars = set()
+        if parsed and isinstance(parsed, dict):
+            for m in parsed.get("spatial_movements", []):
+                if isinstance(m, dict) and m.get("character"):
+                    moved_chars.add(m["character"])
+
         for char in characters:
+            if char in moved_chars:
+                continue  # 已有精确位置，跳过粗粒度回退
             existing = [cl for cl in self.continuity.character_locations
                         if cl.chapter == chapter and cl.character == char]
             if not existing:
@@ -941,12 +960,15 @@ class WriterAgent:
                 ))
                 new_count += 1
             elif task_id in self.memory.tasks:
-                existing = self.memory.tasks[task_id]
+                # SETTINGS_JSON 使用扁平结构（模板定义），
+                # 但部分历史数据可能使用 nested updates。
+                # 优先读扁平字段，fallback 到 updates。
                 updates = t.get("updates", {})
-                prog = updates.get("progress", "")
+                prog = t.get("progress", "") or updates.get("progress", "")
+                status = t.get("status", "") or updates.get("status", "")
                 if prog:
                     self.memory.update_task_progress(task_id, prog)
-                if updates.get("status") == "completed":
+                if status == "completed":
                     self.memory.complete_task(task_id, chapter)
                 updated_count += 1
 

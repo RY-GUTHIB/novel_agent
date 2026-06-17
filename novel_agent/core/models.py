@@ -5,7 +5,8 @@ models.py - 所有数据模型（dataclass）
 不依赖任何业务逻辑，可独立 import。
 """
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional
 
 
@@ -212,3 +213,137 @@ class StyleProfile:
     dialect_markers: str = ""       # 方言特征（如无/轻微/浓厚）
     example_snippets: List[str] = field(default_factory=list)  # 风格范例片段（2-3段原文）
     notes: str = ""
+
+
+# ============ SETTINGS_JSON Schema（LLM 输出契约 + 消费方校验）============
+
+@dataclass
+class CharacterUpdate:
+    """SETTINGS_JSON 中的单个人物条目"""
+    name: str = ""
+    is_new: bool = False
+    updates: dict = field(default_factory=lambda: {
+        "gender": "", "age": "", "appearance": "", "personality": "",
+        "background": "", "goals": "", "speaking_style": "", "abilities": [],
+        "cultivation": "", "current_location": "", "status": "alive",
+        "core_values": "", "core_desire": "", "core_fear": "", "flaw": "",
+        "alignment": "", "notes": "",
+        "relationships": {},
+        "relationship_contexts": {},
+    })
+
+
+@dataclass
+class SettingsSchema:
+    """SETTINGS_JSON 的完整 schema，定义 LLM 输出结构和 _apply_* 消费契约"""
+    characters: list = field(default_factory=list)
+    world_settings: list = field(default_factory=list)
+    sect_factions: list = field(default_factory=list)
+    locations: list = field(default_factory=list)
+    scene_events: list = field(default_factory=list)
+    spatial_movements: list = field(default_factory=list)
+    spacemap_updates: list = field(default_factory=list)
+    plot_rules: list = field(default_factory=list)
+    character_knowledge: list = field(default_factory=list)
+    items: list = field(default_factory=list)
+    tasks: list = field(default_factory=list)
+    timeline_events: list = field(default_factory=list)
+    style: dict = field(default_factory=dict)
+
+    # 顶层字段列表，用于校验和生成
+    FIELDS = [
+        "characters", "world_settings", "sect_factions", "locations",
+        "scene_events", "spatial_movements", "spacemap_updates",
+        "plot_rules", "character_knowledge", "items", "tasks",
+        "timeline_events", "style",
+    ]
+
+
+def generate_settings_json_example() -> str:
+    """生成 SETTINGS_JSON 示例字符串（用于注入 LLM prompt）。
+    新增字段时只需在 SettingsSchema.FIELDS 中添加 key，
+    并在 _apply_* 中添加对应消费方法即可。两者不一致会在校验时发现。
+    """
+    example = {
+        "characters": [{
+            "name": "名", "is_new": True,
+            "updates": {
+                "gender": "性", "age": "龄", "appearance": "貌",
+                "personality": "性", "background": "背", "goals": "标",
+                "speaking_style": "语", "abilities": [],
+                "cultivation": "", "current_location": "", "status": "alive",
+                "core_values": "", "core_desire": "", "core_fear": "",
+                "flaw": "", "alignment": "", "notes": "",
+                "relationships": {},
+                "relationship_contexts": {
+                    "他人": {"type": "关系类型", "stance": "friendly/neutral/hostile/adversarial",
+                            "met_chapter": 0, "met_context": "认识场景", "key_events": []},
+                },
+            },
+        }],
+        "world_settings": [{"key": "设定名", "value": "设定描述"}],
+        "sect_factions": [{
+            "name": "势力名", "is_new": True,
+            "updates": {
+                "type": "宗门", "description": "描述", "strength": "实力",
+                "hierarchy": [], "key_members": [], "allies": [], "enemies": [],
+                "location": "", "rules": [],
+            },
+        }],
+        "locations": [{
+            "name": "地名", "is_new": True,
+            "updates": {
+                "description": "描述", "type": "city",
+                "connected_to": [], "notable_characters": [],
+            },
+        }],
+        "scene_events": [{
+            "location": "地名", "scene": "开场/中段/结尾", "event": "事件",
+            "characters": [], "importance": 3,
+        }],
+        "spatial_movements": [{
+            "character": "人物", "from_location": "A", "to_location": "B",
+            "scene": "场景", "travel_method": "方式", "travel_time": "耗时", "note": "",
+        }],
+        "spacemap_updates": [{
+            "from_location": "A", "to_location": "B",
+            "travel_time": "时间", "is_bidirectional": True,
+        }],
+        "plot_rules": [{
+            "condition": "条件", "consequence": "结果",
+            "rule_text": "原文", "source_character": "角色",
+        }],
+        "character_knowledge": [{
+            "character": "角色", "knowledge": "知道了什么",
+            "source": "怎么知道", "detail": "",
+        }],
+        "items": [{
+            "name": "物品名", "is_new": True,
+            "updates": {
+                "type": "类型", "description": "描述",
+                "first_giver": "赋予者", "current_holder": "持有者", "status": "active",
+            },
+        }],
+        "tasks": [{
+            "id": "任务ID", "name": "任务名", "description": "描述",
+            "status": "active/completed", "progress": "当前进度",
+            "related_characters": [], "related_items": [],
+        }],
+        "timeline_events": [{
+            "time_tag": "三日后/当天/五日后", "event": "事件描述",
+            "characters": ["人物"], "location": "地点",
+            "importance": 2, "season": "秋",
+        }],
+        "style": {},
+    }
+    return json.dumps(example, ensure_ascii=False, indent=None)
+
+
+def validate_settings_json(parsed: dict) -> List[str]:
+    """校验 SETTINGS_JSON 的字段完整性，返回缺失字段列表。
+    在 _apply_all_settings 前调用，确保 LLM 输出与 schema 一致。"""
+    missing = []
+    for field_name in SettingsSchema.FIELDS:
+        if field_name not in parsed:
+            missing.append(field_name)
+    return missing

@@ -598,17 +598,23 @@ class ContractValidator:
             if not personality:
                 continue
 
+            # 只检查包含该角色名字的段落，避免误报其他角色的行为
+            paragraphs = re.split(r'\n\s*\n', content)
+            char_paragraphs = [p for p in paragraphs if name in p]
+
             # 检测性格关键词
             for trait, bad_actions in personality_contradictions.items():
                 if trait not in personality:
                     continue
                 for action in bad_actions:
-                    if action in content:
-                        violations.append(ContractViolation(
-                            severity="中", category="关系",
-                            message=f"「{name}」性格为「{personality}」，但本章正文出现「{action}」行为，可能违反人物设定",
-                            evidence=f"性格={personality}，矛盾行为={action}",
-                        ))
+                    for para in char_paragraphs:
+                        if action in para:
+                            violations.append(ContractViolation(
+                                severity="中", category="关系",
+                                message=f"「{name}」性格为「{personality}」，但本章含该角色的段落出现「{action}」行为，可能违反人物设定",
+                                evidence=f"性格={personality}，矛盾行为={action}",
+                            ))
+                            break  # 每个角色每对(trait, action)只报一次
 
     # ========== 6. 时间一致性 ==========
 

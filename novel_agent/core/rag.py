@@ -33,6 +33,7 @@ class RAGStore:
         self._bm25 = None
         self._bm25_docs: List[str] = []
         self._bm25_metas: List[Dict] = []
+        self._bm25_dirty = False  # 标记 BM25 需要重建（写时不重建，搜时按需重建）
 
     def _init_client(self):
         """懒加载 ChromaDB 客户端"""
@@ -56,15 +57,15 @@ class RAGStore:
         )
 
     def _init_bm25(self):
-        """懒加载 BM25 索引"""
-        if self._bm25 is not None:
+        """懒加载 BM25 索引（按需重建，不阻塞写入路径）"""
+        if self._bm25 is not None and not self._bm25_dirty:
             return
         try:
             from rank_bm25 import BM25Okapi
         except ImportError:
             raise ImportError("请先安装 rank_bm25: pip install rank_bm25")
 
-        # 从 ChromaDB 重建 BM25 索引
+        # 从 ChromaDB 全量重建 BM25 索引
         self._init_client()
         try:
             all_data = self._collection.get()
@@ -73,6 +74,7 @@ class RAGStore:
                 self._bm25_metas = list(all_data["metadatas"]) if all_data.get("metadatas") else []
                 tokenized = [self._tokenize(d) for d in self._bm25_docs]
                 self._bm25 = BM25Okapi(tokenized)
+                self._bm25_dirty = False
         except Exception:
             self._bm25_docs = []
             self._bm25_metas = []
@@ -109,8 +111,6 @@ class RAGStore:
             )
             if existing_ids and existing_ids.get("ids"):
                 self._collection.delete(ids=existing_ids["ids"])
-                # 标记 BM25 需要重建
-                self._bm25 = None
         except Exception:
             pass  # 首次写入无旧数据
 
@@ -138,32 +138,11 @@ class RAGStore:
                 metadatas=metadatas[start:end],
             )
 
-        # 更新 BM25 索引
-        if self._bm25 is None:
-            # 覆盖写入后，从全量集合重建 BM25
-            try:
-                all_data = self._collection.get()
-                if all_data and all_data.get("documents"):
-                    self._bm25_docs = list(all_data["documents"])
-                    self._bm25_metas = list(all_data["metadatas"]) if all_data.get("metadatas") else []
-                    from rank_bm25 import BM25Okapi
-                    tokenized = [self._tokenize(d) for d in self._bm25_docs]
-                    self._bm25 = BM25Okapi(tokenized)
-            except ImportError:
-                pass
-        else:
-            # 增量追加
-            self._bm25_docs.extend(chunks)
-            self._bm25_metas.extend(metadatas)
-            try:
-                from rank_bm25 import BM25Okapi
-                tokenized = [self._tokenize(d) for d in self._bm25_docs]
-                self._bm25 = BM25Okapi(tokenized)
-            except ImportError:
-                pass
+        # 标记 BM25 为脏，检索时按需重建（不阻塞写入路径）
+        self._bm25_dirty = True
 
     def add_outline_entry(self, entry_type: str, title: str, content: str):
-        """存储大纲/设定条目（同时更新 BM25 索引）"""
+        """存储大纲/设定条目"""
         self._init_client()
         chunk_id = f"{entry_type}_{title}"
         self._collection.add(
@@ -175,19 +154,7 @@ class RAGStore:
                 "type": entry_type,
             }],
         )
-        # 同步更新 BM25 索引
-        self._bm25_docs.append(content)
-        self._bm25_metas.append({
-            "chapter": -1,
-            "title": title,
-            "type": entry_type,
-        })
-        try:
-            from rank_bm25 import BM25Okapi
-            tokenized = [self._tokenize(d) for d in self._bm25_docs]
-            self._bm25 = BM25Okapi(tokenized)
-        except ImportError:
-            pass
+        self._bm25_dirty = True
 
     def search(self, query: str, top_k: int = config.RAG_TOP_K,
                filter_chapter_lt: int = None,
@@ -361,6 +328,7 @@ class RAGStore:
         self._bm25 = None
         self._bm25_docs = []
         self._bm25_metas = []
+        self._bm25_dirty = False
 
     def get_collection_count(self) -> int:
         """获取已存储片段数量"""

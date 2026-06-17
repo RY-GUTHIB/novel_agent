@@ -20,7 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
 from novel_agent.project import create_project, NOVEL_TYPES, NOVEL_STYLES
-from novel_agent.cli.commands import init_services, check_api_key, generate_outline
+from novel_agent.cli.commands import init_services, generate_outline
+from novel_agent.llm.client import check_api_key
 
 
 def main():

@@ -25,6 +25,7 @@ from novel_agent.agents.planner import PlannerAgent
 from novel_agent.agents.writer import WriterAgent
 from novel_agent.agents.reviewer import ReviewerAgent
 from novel_agent.visualizer import generate_all_visualizations
+from novel_agent.llm.client import check_api_key
 
 
 # =========== 项目管理 ===========
@@ -156,25 +157,6 @@ def init_services():
     """初始化所有服务（必须在 config.set_project() 之后调用）"""
     from novel_agent.core.rag import RAGStore
     return MemoryManager(), ContinuityGuard(), ForeshadowTracker(), RAGStore()
-
-
-def check_api_key():
-    key_map = {
-        "deepseek": ("DEEPSEEK_API_KEY", config.DEEPSEEK_API_KEY),
-        "qwen": ("QWEN_API_KEY", config.QWEN_API_KEY),
-        "gemini": ("GEMINI_API_KEY", config.GEMINI_API_KEY),
-        "claude": ("CLAUDE_API_KEY", config.CLAUDE_API_KEY),
-        "volcengine": ("VOLCENGINE_API_KEY", config.VOLCENGINE_API_KEY),
-    }
-    provider = config.LLM_PROVIDER.lower()
-    if provider in key_map:
-        name, key = key_map[provider]
-        if not key:
-            print(f"❌ 错误：未配置 {name}")
-            print("请在 novel_agent/config.py 中设置，或设置环境变量：")
-            print(f"  set {name}=your-key-here")
-            sys.exit(1)
-    print(f"✅ 使用模型：{config.LLM_PROVIDER}")
 
 
 def generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept):

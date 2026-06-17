@@ -16,7 +16,7 @@ from novel_agent.core.models import CharacterProfile, LocationProfile, WorldSett
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
-from novel_agent.llm.client import generate
+from novel_agent.llm.client import generate, parse_json
 from .prompts import PLANNER_SYSTEM_PROMPT, OUTLINE_REFINE_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -538,61 +538,14 @@ class PlannerAgent:
 
     @staticmethod
     def _extract_json(text: str) -> Dict:
-        """从 LLM 输出中提取 JSON，多层 fallback + 截断检测 + 修复尝试"""
-        # 第1层：直接解析
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # 第2层：提取 markdown 代码块
-        match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
-
-        # 第3层：提取最外层大括号（贪婪匹配到最后一个 }）
-        match = re.search(r'\{[\s\S]*\}', text)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-
-        # 第4层：检测截断并尝试修复
-        match = re.search(r'\{[\s\S]*', text)
-        if match:
-            partial = match.group(0)
-            # 用栈精确计算括号平衡
-            stack = []
-            for ch in partial:
-                if ch in '{[':
-                    stack.append(ch)
-                elif ch == '}':
-                    if stack and stack[-1] == '{':
-                        stack.pop()
-                    else:
-                        stack.append(ch)
-                elif ch == ']':
-                    if stack and stack[-1] == '[':
-                        stack.pop()
-                    else:
-                        stack.append(ch)
-            open_braces = sum(1 for c in stack if c == '{')
-            open_brackets = sum(1 for c in stack if c == '[')
-            if open_braces > 0 or open_brackets > 0:
-                # 尝试补全闭合括号后重新解析
-                repaired = partial + '}' * open_braces + ']' * open_brackets
-                try:
-                    return json.loads(repaired)
-                except json.JSONDecodeError:
-                    raise ValueError(
-                        f"大纲 JSON 被截断（缺少 {open_braces} 个闭合花括号, {open_brackets} 个闭合方括号），"
-                        f"自动补全后仍无法解析。请增大 max_tokens 后重试。"
-                    )
-        return None
+        """从 LLM 输出中提取 JSON（委托给 client.parse_json，含截断修复）"""
+        result = parse_json(text)
+        if result is not None:
+            return result
+        raise ValueError(
+            "大纲 JSON 解析失败：无法从 LLM 输出中提取有效的 JSON 对象。"
+            "请检查 LLM 输出格式是否正确。"
+        )
 
     def save_outline_json(self, outline: Dict, filepath: str = None):
         from pathlib import Path

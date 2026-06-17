@@ -5,6 +5,7 @@ generator.py - LLM调用封装（多后端支持）
     response = generate(prompt, system_prompt=..., temperature=...)
 """
 
+import sys
 import time
 import json
 import re
@@ -149,16 +150,12 @@ def generate(system_prompt: str, user_prompt: str,
     provider = config.LLM_PROVIDER.lower()
 
     if provider == "deepseek":
-        if not config.DEEPSEEK_API_KEY:
-            raise ValueError("未配置 DEEPSEEK_API_KEY，请在 config.py 或环境变量中设置")
         return _retry(_call_openai_compatible,
             config.DEEPSEEK_BASE_URL, config.DEEPSEEK_API_KEY, config.DEEPSEEK_MODEL,
             system_prompt, user_prompt, temperature, max_tokens
         )
 
     elif provider == "qwen":
-        if not config.QWEN_API_KEY:
-            raise ValueError("未配置 QWEN_API_KEY")
         return _retry(_call_openai_compatible,
             config.QWEN_BASE_URL, config.QWEN_API_KEY, config.QWEN_MODEL,
             system_prompt, user_prompt, temperature, max_tokens
@@ -171,18 +168,12 @@ def generate(system_prompt: str, user_prompt: str,
         )
 
     elif provider == "gemini":
-        if not config.GEMINI_API_KEY:
-            raise ValueError("未配置 GEMINI_API_KEY")
         return _retry(_call_gemini, system_prompt, user_prompt, temperature, max_tokens)
 
     elif provider == "claude":
-        if not config.CLAUDE_API_KEY:
-            raise ValueError("未配置 CLAUDE_API_KEY")
         return _retry(_call_claude, system_prompt, user_prompt, temperature, max_tokens)
 
     elif provider == "volcengine":
-        if not config.VOLCENGINE_API_KEY:
-            raise ValueError("未配置 VOLCENGINE_API_KEY，请在 config.py 或环境变量中设置")
         return _retry(_call_openai_compatible,
             config.VOLCENGINE_BASE_URL, config.VOLCENGINE_API_KEY, config.VOLCENGINE_MODEL,
             system_prompt, user_prompt, temperature, max_tokens
@@ -190,6 +181,27 @@ def generate(system_prompt: str, user_prompt: str,
 
     else:
         raise ValueError(f"不支持的 LLM_PROVIDER: {provider}，请在 config.py 中修改")
+
+
+def check_api_key():
+    """写作前全量 API Key 校验。所有 provider 的 key 检查集中于此，
+    generate() 内部不再重复校验（各 _call_* 函数在 key 为空时会自然失败）。"""
+    key_map = {
+        "deepseek": ("DEEPSEEK_API_KEY", config.DEEPSEEK_API_KEY),
+        "qwen": ("QWEN_API_KEY", config.QWEN_API_KEY),
+        "gemini": ("GEMINI_API_KEY", config.GEMINI_API_KEY),
+        "claude": ("CLAUDE_API_KEY", config.CLAUDE_API_KEY),
+        "volcengine": ("VOLCENGINE_API_KEY", config.VOLCENGINE_API_KEY),
+    }
+    provider = config.LLM_PROVIDER.lower()
+    if provider in key_map:
+        name, key = key_map[provider]
+        if not key:
+            print(f"❌ 错误：未配置 {name}")
+            print("请在 novel_agent/config.py 中设置，或设置环境变量：")
+            print(f"  set {name}=your-key-here")
+            sys.exit(1)
+    print(f"✅ 使用模型：{config.LLM_PROVIDER}")
 
 
 def generate_stream(system_prompt: str, user_prompt: str,
@@ -268,7 +280,7 @@ def generate_stream(system_prompt: str, user_prompt: str,
 
 
 def parse_json(text: str) -> dict:
-    """从 LLM 输出中提取 JSON 对象，多层 fallback + 栈匹配避免贪婪误提取"""
+    """从 LLM 输出中提取 JSON 对象，多层 fallback + 栈匹配 + 截断修复"""
     # 第1层：直接解析
     try:
         return json.loads(text)
@@ -285,7 +297,57 @@ def parse_json(text: str) -> dict:
     result = _extract_first_json_object(text)
     if result is not None:
         return result
+    # 第4层：检测截断并尝试补全闭合括号
+    result = _repair_truncated_json(text)
+    if result is not None:
+        return result
     return None
+
+
+def _repair_truncated_json(text: str) -> Optional[dict]:
+    """检测被截断的 JSON，尝试补全闭合括号后解析"""
+    # 找到第一个 {
+    start = text.find('{')
+    if start == -1:
+        return None
+    partial = text[start:]
+
+    # 用栈计算括号平衡
+    stack = []
+    in_string = False
+    escape = False
+    for ch in partial:
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in '{[':
+            stack.append(ch)
+        elif ch == '}':
+            if stack and stack[-1] == '{':
+                stack.pop()
+        elif ch == ']':
+            if stack and stack[-1] == '[':
+                stack.pop()
+
+    open_braces = sum(1 for c in stack if c == '{')
+    open_brackets = sum(1 for c in stack if c == '[')
+    if open_braces == 0 and open_brackets == 0:
+        return None  # 文本本身是完整的
+
+    # 补全闭合括号后重试
+    repaired = partial + '}' * open_braces + ']' * open_brackets
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
 
 
 def _extract_first_json_object(text: str) -> Optional[dict]:
