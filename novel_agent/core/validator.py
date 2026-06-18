@@ -12,6 +12,7 @@ validator.py - 生成后契约校验（不调 LLM，纯程序化检查）
 import re
 from typing import List, Dict, Tuple
 from .models import CharacterProfile, CharacterKnowledge, PlotRule
+from .file_utils import parse_chinese_number
 
 
 class ContractViolation:
@@ -56,6 +57,13 @@ class ContractValidator:
         (re.compile(r"(?:半日|半天|几个时辰|半晌)"), 0.5),
         (re.compile(r"(?:一时辰|一个时辰|片刻)"), 0.08),
     ]
+
+    @staticmethod
+    def _parse_chinese_number(s: str):
+        """解析中文数字字符串为整数"""
+        if not s:
+            return None
+        return parse_chinese_number(s)
 
     def __init__(self):
         # 立场矛盾的关键词对
@@ -344,19 +352,13 @@ class ContractValidator:
             if t in cultivation:
                 tier = i
                 break
-        # 提取层数（如 "三层"、"九重"）
+        # 提取层数（如 "三层"、"九重"、"十二层"、"二十层"）
         layer_pattern = ContractValidator._CN_LAYER_PATTERN.search(cultivation)
         if layer_pattern:
-            layer_map = {
-                "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
-                "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
-                "零": 0,
-            }
             layer_str = layer_pattern.group(1)
-            if layer_str in layer_map:
-                return (tier, layer_map[layer_str])
-            if len(layer_str) == 1:
-                return (tier, layer_map.get(layer_str, 0))
+            layer_num = ContractValidator._parse_chinese_number(layer_str)
+            if layer_num is not None:
+                return (tier, layer_num)
         # 提取数字层数（如 "9层"、"3重"）
         digit_pattern = ContractValidator._DIGIT_LAYER_PATTERN.search(cultivation)
         if digit_pattern:
@@ -660,28 +662,25 @@ class ContractValidator:
                     evidence=f"检测到季节特征：{', '.join(sorted(seasons_found))}",
                 ))
 
-        # 6b. 时间倒流检查（一天内横跨大陆等）
+        # 6b. 短时间内横跨远距离检查
         time_span_days = 0
         for pattern, days in self._TIME_SPAN_PATTERNS:
             if pattern.search(content):
                 time_span_days = days
                 break
 
-        # 检查是否在短时间内到达了远距离地点
-        travel_keywords = [
-            "御剑", "飞行", "飞往", "赶往", "前往", "来到", "抵达", "到达",
-            "穿过", "翻过", "越过", "渡过", "传送阵", "遁术", "瞬移",
-        ]
-        location_pattern = r'(?:来到|抵达|到达|出现在|前往)([^，。,.\n]{2,6})'
-        locations = self._TIME_LOCATION_PATTERN.findall(content)
-
-        if time_span_days > 0 and len(locations) >= 2:
-            has_travel_justification = any(kw in content for kw in [
-                "传送阵", "传送", "遁术", "瞬移", "飞舟", "飞剑",
-            ])
-            if not has_travel_justification:
-                # 检查是否有 spacemap 记录的行程时间做对比
-                pass  # 当前只做简单关键词检测，后续可扩展
+        if time_span_days > 0:
+            locations = self._TIME_LOCATION_PATTERN.findall(content)
+            if len(locations) >= 2:
+                has_travel_justification = any(kw in content for kw in [
+                    "传送阵", "传送", "遁术", "瞬移", "飞舟", "飞剑",
+                ])
+                if not has_travel_justification:
+                    violations.append(ContractViolation(
+                        severity="中", category="时间",
+                        message=f"正文时间跨度约{time_span_days}日，但出现{len(locations)}个地点变化（{', '.join(set(locations[:3]))}），且无传送/瞬移说明，可能空间距离不合理",
+                        evidence=f"time_span={time_span_days}日，地点={', '.join(set(locations[:3]))}",
+                    ))
 
         # 6c. 事件顺序颠倒（同角色：先死后生）
         death_indicators = ["死了", "陨落", "毙命", "丧命", "阵亡", "牺牲", "被杀", "倒下"]

@@ -8,38 +8,27 @@ continuity.py - 时间线 + 空间线守卫（防崩坏）
 4. 持久化到 data/timeline.json 和 data/spacemap.json
 """
 
-import json
 import re
-import config
 from pathlib import Path
 from typing import Dict, List
 from .models import TimelineEvent, CharacterLocation, LocationProfile
-from .file_utils import atomic_write_json
+from .file_utils import atomic_write_json, parse_chinese_number, parse_travel_time, JsonRepositoryMixin
 
 
-class ContinuityGuard:
+class ContinuityGuard(JsonRepositoryMixin):
     """时间线 + 空间线守卫"""
 
-    def __init__(self, data_dir: str = None):
-        self.data_dir = Path(data_dir or config.DATA_DIR)
+    def __init__(self, data_dir: str, enable_continuity_check: bool = True):
+        self.data_dir = Path(data_dir)
         self.timeline: List[TimelineEvent] = []
         self.spacemap: Dict[str, LocationProfile] = {}
         self.character_locations: List[CharacterLocation] = []
         self.absolute_day: float = 0  # 故事已过天数（累计）
+        self.enable_continuity_check = enable_continuity_check
+        self._time_updated_chapters: set = set()  # 已累计天数的章节集合
         self._load_all()
-
-    # ========== JSON 工具 ==========
-
-    def _save_json(self, filename: str, data):
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(self.data_dir / filename, data)
-
-    def _load_json(self, filename: str):
-        path = self.data_dir / filename
-        if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return []
+        # 从已加载的 timeline 重建时间已更新章节集合
+        self._time_updated_chapters = {e.chapter for e in self.timeline}
 
     # ========== 加载/保存 ==========
 
@@ -50,19 +39,19 @@ class ContinuityGuard:
         self._load_absolute_day()
 
     def save_all(self):
-        self._save_timeline()
-        self._save_spacemap()
-        self._save_character_locations()
-        self._save_absolute_day()
+        self.save_timeline()
+        self.save_spacemap()
+        self.save_character_locations()
+        self.save_absolute_day()
 
     # ========== 时间线 ==========
 
-    def _save_timeline(self):
+    def save_timeline(self):
         from dataclasses import asdict
         self._save_json("timeline.json", [asdict(e) for e in self.timeline])
 
     def _load_timeline(self):
-        data = self._load_json("timeline.json")
+        data = self._load_json("timeline.json", default=[])
         self.timeline = [TimelineEvent(**d) for d in data]
 
     def add_event(self, chapter: int, time_tag: str, event: str,
@@ -78,11 +67,10 @@ class ContinuityGuard:
             characters=cleaned_chars, location=location, importance=importance,
         )
         self.timeline.append(new_event)
-        self._save_timeline()
+        self.save_timeline()
 
-        # 累计时间轴：只在每章第一条事件时更新
-        chapter_events = [e for e in self.timeline if e.chapter == chapter]
-        if len(chapter_events) == 1:
+        if chapter not in self._time_updated_chapters:
+            self._time_updated_chapters.add(chapter)
             self.update_absolute_day(time_tag)
 
     def get_events_for_chapter(self, chapter: int) -> List[TimelineEvent]:
@@ -93,74 +81,33 @@ class ContinuityGuard:
 
     # ========== 累计时间轴 ==========
 
-    def _save_absolute_day(self):
+    def save_absolute_day(self):
         self._save_json("absolute_day.json", self.absolute_day)
 
     def _load_absolute_day(self):
-        path = self.data_dir / "absolute_day.json"
-        if path.exists():
-            try:
-                self.absolute_day = json.loads(path.read_text(encoding="utf-8"))
-                if not isinstance(self.absolute_day, (int, float)):
-                    self.absolute_day = 0
-            except (json.JSONDecodeError, ValueError, IOError, OSError):
-                self.absolute_day = 0
-        else:
-            self.absolute_day = 0
+        data = self._load_json("absolute_day.json", default=0)
+        self.absolute_day = data if isinstance(data, (int, float)) else 0
 
     @staticmethod
     def _parse_time_elapsed(time_tag: str) -> float:
         """从 time_tag 解析与上一章的时间间隔（天数），用于累计时间轴"""
-        if not time_tag:
-            return 0
-        # "三日后""3日后"
-        m = re.search(r'([一二三四五六七八九十百零\d]+)\s*[日天]后', time_tag)
-        if m:
-            return ContinuityGuard._parse_chinese_number(m.group(1))
-        # "2日""3日骑马"（裸数字+日/天）
-        m = re.match(r'(\d+)\s*[日天]', time_tag.strip())
-        if m:
-            return float(m.group(1))
-        # "半日后""半日""半天"
-        if '半' in time_tag:
-            return 0.5
-        # "翌日""次日""第二天"
-        if any(kw in time_tag for kw in ["翌日", "次日", "第二天"]):
-            return 1
-        # "一个时辰后""两个时辰""3时辰"
-        m = re.search(r'([一二三四五六七八九十百零\d]+)\s*个?时辰', time_tag)
-        if m:
-            return ContinuityGuard._parse_chinese_number(m.group(1)) * 0.125
-        # "片刻""少顷" — 忽略
-        if any(kw in time_tag for kw in ["片刻", "少顷", "须臾", "弹指"]):
-            return 0.01
-        # "3日骑马" → 3（兜底数字提取）
-        m = re.match(r'(\d+)', time_tag.strip())
-        if m:
-            return float(m.group(1))
-        return 0
+        return parse_travel_time(time_tag)
 
     @staticmethod
     def _parse_chinese_number(num_str: str) -> float:
         """解析中文数字/阿拉伯数字为 float"""
-        if num_str.isdigit():
-            return float(num_str)
-        cn_map = {"一":1,"二":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10,"百":100,"零":0}
-        total = 0
-        for ch in num_str:
-            total += cn_map.get(ch, 0)
-        return float(total) if total else 0
+        return float(parse_chinese_number(num_str))
 
     def update_absolute_day(self, time_tag: str):
         """根据本章 time_tag 更新累计天数"""
         elapsed = self._parse_time_elapsed(time_tag)
         if elapsed > 0:
             self.absolute_day += elapsed
-            self._save_absolute_day()
+            self.save_absolute_day()
 
     # ========== 空间 ==========
 
-    def _save_spacemap(self):
+    def save_spacemap(self):
         from dataclasses import asdict
         self._save_json("spacemap.json", {k: asdict(v) for k, v in self.spacemap.items()})
 
@@ -172,11 +119,11 @@ class ContinuityGuard:
 
     def add_location(self, node: LocationProfile):
         self.spacemap[node.name] = node
-        self._save_spacemap()
+        self.save_spacemap()
 
     # ========== 人物位置 ==========
 
-    def _save_character_locations(self):
+    def save_character_locations(self):
         from dataclasses import asdict
         self._save_json("character_locations.json", [asdict(cl) for cl in self.character_locations])
 
@@ -195,7 +142,7 @@ class ContinuityGuard:
             self.character_locations.append(CharacterLocation(
                 chapter=chapter, character=character, location=location, scene=scene, note=note,
             ))
-        self._save_character_locations()
+        self.save_character_locations()
 
     def get_character_location(self, character: str, chapter: int) -> str:
         records = [cl for cl in self.character_locations
@@ -218,7 +165,7 @@ class ContinuityGuard:
     def check_continuity(self, chapter: int,
                           new_characters: Dict[str, str],
                           new_time_tag: str = "") -> List[str]:
-        if not config.ENABLE_CONTINUITY_CHECK:
+        if not self.enable_continuity_check:
             return []
         warnings = []
         for character, location in new_characters.items():

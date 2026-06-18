@@ -5,9 +5,7 @@ memory.py - 世界观/人物档案管理
 所有数据持久化到 data/ 目录下的 JSON 文件。
 """
 
-import json
 import dataclasses
-import config
 from pathlib import Path
 from typing import Dict, List, Optional
 from .models import (
@@ -15,14 +13,15 @@ from .models import (
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
     ItemProfile, StyleProfile, TaskProfile,
 )
-from .file_utils import atomic_write_json
+from .file_utils import atomic_write_json, JsonRepositoryMixin
+from .managers import ItemTracker, TaskTracker, StyleManager
 
 
-class MemoryManager:
+class MemoryManager(JsonRepositoryMixin):
     """世界观与人物档案管理器"""
 
-    def __init__(self, data_dir: str = None):
-        self.data_dir = Path(data_dir or config.DATA_DIR)
+    def __init__(self, data_dir: str):
+        self.data_dir = Path(data_dir)
         self.characters: Dict[str, CharacterProfile] = {}
         self.locations: Dict[str, LocationProfile] = {}
         self.world_settings: Dict[str, WorldSetting] = {}
@@ -30,23 +29,15 @@ class MemoryManager:
         self.character_knowledge: Dict[str, List[CharacterKnowledge]] = {}
         self.sect_factions: Dict[str, SectFaction] = {}
         self.scene_events: List[SceneEvent] = []
-        self.items: Dict[str, ItemProfile] = {}
-        self.style: StyleProfile = StyleProfile()  # 风格锚点（单例，全书一套）
-        self.tasks: Dict[str, TaskProfile] = {}
+        # 子管理器（从 MemoryManager 提取的独立领域）
+        self.item_tracker = ItemTracker(data_dir)
+        self.task_tracker = TaskTracker(data_dir)
+        self.style_manager = StyleManager(data_dir)
+        # 别名——保持对调用方的兼容（直接 self.items / self.tasks / self.style）
+        self.items = self.item_tracker.items
+        self.tasks = self.task_tracker.tasks
+        self.style = self.style_manager.style
         self._load_all()
-
-    # ========== JSON 工具 ==========
-
-    def _save_json(self, filename: str, data):
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(self.data_dir / filename, data)
-
-    def _load_json(self, filename: str):
-        path = self.data_dir / filename
-        if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {}
 
     # ========== 加载/保存 ==========
 
@@ -58,25 +49,23 @@ class MemoryManager:
         self._load_character_knowledge()
         self._load_sect_factions()
         self._load_scene_events()
-        self._load_items()
-        self._load_style()
-        self._load_tasks()
+        # 子管理器在各自 __init__ 中已加载，无需重复
 
     def save_all(self):
-        self._save_characters()
-        self._save_locations()
-        self._save_world_settings()
-        self._save_plot_rules()
-        self._save_character_knowledge()
-        self._save_sect_factions()
-        self._save_scene_events()
-        self._save_items()
-        self._save_style()
-        self._save_tasks()
+        self.save_characters()
+        self.save_locations()
+        self.save_world_settings()
+        self.save_plot_rules()
+        self.save_character_knowledge()
+        self.save_sect_factions()
+        self.save_scene_events()
+        self.item_tracker.save()
+        self.style_manager.save()
+        self.task_tracker.save()
 
     # ========== 人物 ==========
 
-    def _save_characters(self):
+    def save_characters(self):
         data = {k: dataclasses.asdict(v) for k, v in self.characters.items()}
         self._save_json("characters.json", data)
 
@@ -97,11 +86,11 @@ class MemoryManager:
         for k, v in kwargs.items():
             if hasattr(char, k):
                 setattr(char, k, v)
-        self._save_characters()
+        self.save_characters()
 
     # ========== 地点 ==========
 
-    def _save_locations(self):
+    def save_locations(self):
         data = {k: dataclasses.asdict(v) for k, v in self.locations.items()}
         self._save_json("locations.json", data)
 
@@ -115,7 +104,7 @@ class MemoryManager:
 
     # ========== 世界观设定 ==========
 
-    def _save_world_settings(self):
+    def save_world_settings(self):
         data = {k: dataclasses.asdict(v) for k, v in self.world_settings.items()}
         self._save_json("world_settings.json", data)
 
@@ -129,7 +118,7 @@ class MemoryManager:
 
     # ========== 剧情规则 ==========
 
-    def _save_plot_rules(self):
+    def save_plot_rules(self):
         data = {k: dataclasses.asdict(v) for k, v in self.plot_rules.items()}
         self._save_json("plot_rules.json", data)
 
@@ -143,11 +132,11 @@ class MemoryManager:
 
     def add_plot_rule(self, rule: PlotRule):
         self.plot_rules[rule.condition] = rule
-        self._save_plot_rules()
+        self.save_plot_rules()
 
     # ========== 角色认知 ==========
 
-    def _save_character_knowledge(self):
+    def save_character_knowledge(self):
         data = {k: [dataclasses.asdict(i) for i in v] for k, v in self.character_knowledge.items()}
         self._save_json("character_knowledge.json", data)
 
@@ -168,11 +157,11 @@ class MemoryManager:
             if k.knowledge == knowledge.knowledge:
                 return
         existing.append(knowledge)
-        self._save_character_knowledge()
+        self.save_character_knowledge()
 
     # ========== 势力/宗派 ==========
 
-    def _save_sect_factions(self):
+    def save_sect_factions(self):
         data = {k: dataclasses.asdict(v) for k, v in self.sect_factions.items()}
         self._save_json("sect_factions.json", data)
 
@@ -189,7 +178,7 @@ class MemoryManager:
 
     def add_sect_faction(self, faction: SectFaction):
         self.sect_factions[faction.name] = faction
-        self._save_sect_factions()
+        self.save_sect_factions()
 
     def update_sect_faction(self, name: str, **kwargs):
         if name not in self.sect_factions:
@@ -204,11 +193,11 @@ class MemoryManager:
                             existing.append(item)
                 elif v:
                     setattr(faction, k, v)
-        self._save_sect_factions()
+        self.save_sect_factions()
 
     # ========== 场景事件 ==========
 
-    def _save_scene_events(self):
+    def save_scene_events(self):
         data = [dataclasses.asdict(e) for e in self.scene_events]
         self._save_json("scene_events.json", data)
 
@@ -224,7 +213,7 @@ class MemoryManager:
 
     def add_scene_event(self, event: SceneEvent):
         self.scene_events.append(event)
-        self._save_scene_events()
+        self.save_scene_events()
 
     # ========== Prompt 生成 ==========
 
@@ -310,7 +299,7 @@ class MemoryManager:
             return "（无角色认知记录）"
         lines = ["【角色已知信息（写作时必须遵守——角色不能对已知信息表现惊讶）】"]
         for char_name, knowledge_list in self.character_knowledge.items():
-            known_by_chapter = [k for k in knowledge_list if k.chapter_learned < chapter] if chapter > 0 else knowledge_list
+            known_by_chapter = [k for k in knowledge_list if k.chapter_learned <= chapter] if chapter > 0 else knowledge_list
             if not known_by_chapter:
                 continue
             lines.append(f"\n  🧠 {char_name} 已知：")
@@ -454,7 +443,7 @@ class MemoryManager:
 
             # 角色已知信息（强约束）
             if char_name in self.character_knowledge:
-                known = [k for k in self.character_knowledge[char_name] if k.chapter_learned < chapter]
+                known = [k for k in self.character_knowledge[char_name] if k.chapter_learned <= chapter]
                 if known:
                     lines.append(f"  🔒 已知信息锁定（{char_name} 已经知道，不得再表现出惊讶/好奇）：")
                     for k in known:
@@ -501,68 +490,26 @@ class MemoryManager:
                 warnings.append(f"⚠️ 预检：{char_name} 已标记为死亡（status=dead），但本章计划出场。如非复活剧情请修正。")
         return warnings
 
-    # ========== 物品状态追踪（方案1+2+5：显式状态管理）==========
+    # ========== 物品状态追踪（委派给 ItemTracker）==========
 
     def _load_items(self):
-        data = self._load_json("items.json")
-        for name, item_data in data.items():
-            if isinstance(item_data, dict):
-                self.items[name] = ItemProfile(
-                    name=name,
-                    type=item_data.get("type", ""),
-                    description=item_data.get("description", ""),
-                    first_appeared=item_data.get("first_appeared", 1),
-                    first_giver=item_data.get("first_giver", ""),
-                    current_holder=item_data.get("current_holder", ""),
-                    subsequent_transfers=item_data.get("subsequent_transfers", []),
-                    prohibited_actions=item_data.get("prohibited_actions", []),
-                    status=item_data.get("status", "active"),
-                    notes=item_data.get("notes", ""),
-                )
+        self.item_tracker._load()
 
-    def _save_items(self):
-        data = {}
-        for name, item in self.items.items():
-            data[name] = {
-                "type": item.type, "description": item.description,
-                "first_appeared": item.first_appeared, "first_giver": item.first_giver,
-                "current_holder": item.current_holder,
-                "subsequent_transfers": item.subsequent_transfers,
-                "prohibited_actions": item.prohibited_actions,
-                "status": item.status, "notes": item.notes,
-            }
-        self._save_json("items.json", data)
+    def save_items(self):
+        self.item_tracker.save()
 
     def add_item(self, item: ItemProfile):
-        if item.name not in self.items:
-            self.items[item.name] = item
-            self._save_items()
+        self.item_tracker.add(item)
 
     def get_item(self, name: str) -> Optional[ItemProfile]:
-        return self.items.get(name)
+        return self.item_tracker.get(name)
 
     def update_item(self, name: str, **kwargs):
-        """更新物品字段并持久化"""
-        if name not in self.items:
-            self.items[name] = ItemProfile(name=name)
-        item = self.items[name]
-        for k, v in kwargs.items():
-            if hasattr(item, k) and v:
-                setattr(item, k, v)
-        self._save_items()
+        self.item_tracker.update(name, **kwargs)
 
     def transfer_item(self, item_name: str, from_holder: str, to_holder: str,
                       chapter: int, reason: str = ""):
-        """记录物品转移"""
-        if item_name not in self.items:
-            return
-        item = self.items[item_name]
-        item.current_holder = to_holder
-        item.subsequent_transfers.append({
-            "from": from_holder, "to": to_holder,
-            "chapter": chapter, "reason": reason,
-        })
-        self._save_items()
+        self.item_tracker.transfer(item_name, from_holder, to_holder, chapter, reason)
 
     def build_state_snapshot(self, chapter: int, characters: list, timeline_events: list = None) -> str:
         """构建「当前世界状态快照」——写作和审校前注入 prompt，防止事实矛盾。
@@ -682,124 +629,46 @@ class MemoryManager:
 
         return "\n".join(parts)
 
-    # ========== 风格锚点 ==========
+    # ========== 风格锚点（委派给 StyleManager）==========
 
     def _load_style(self):
-        """从 style.json 加载风格锚点"""
-        path = self.data_dir / "style.json"
-        if not path.exists():
-            self.style = StyleProfile()
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            self.style = StyleProfile(
-                chapter_introduced=data.get("chapter_introduced", 1),
-                narrative_voice=data.get("narrative_voice", ""),
-                sentence_rhythm=data.get("sentence_rhythm", ""),
-                paragraph_pattern=data.get("paragraph_pattern", ""),
-                rhetorical_devices=data.get("rhetorical_devices", []),
-                tone_words=data.get("tone_words", []),
-                forbidden_words=data.get("forbidden_words", []),
-                dialect_markers=data.get("dialect_markers", ""),
-                example_snippets=data.get("example_snippets", []),
-                notes=data.get("notes", ""),
-            )
-        except (json.JSONDecodeError, IOError, OSError):
-            self.style = StyleProfile()
+        self.style_manager._load()
+        # 保持 self.style 引用同步
+        self.style = self.style_manager.style
 
-    def _save_style(self):
-        """保存风格锚点到 style.json"""
-        path = self.data_dir / "style.json"
-        data = {
-            "chapter_introduced": self.style.chapter_introduced,
-            "narrative_voice": self.style.narrative_voice,
-            "sentence_rhythm": self.style.sentence_rhythm,
-            "paragraph_pattern": self.style.paragraph_pattern,
-            "rhetorical_devices": self.style.rhetorical_devices,
-            "tone_words": self.style.tone_words,
-            "forbidden_words": self.style.forbidden_words,
-            "dialect_markers": self.style.dialect_markers,
-            "example_snippets": self.style.example_snippets,
-            "notes": self.style.notes,
-        }
-        atomic_write_json(path, data)
-
-    # ========== 任务清单 ==========
-
-    def _save_tasks(self):
-        data = {k: dataclasses.asdict(v) for k, v in self.tasks.items()}
-        self._save_json("tasks.json", data)
-
-    def _load_tasks(self):
-        data = self._load_json("tasks.json")
-        valid_fields = {f.name for f in dataclasses.fields(TaskProfile)}
-        for tid, d in data.items():
-            filtered = {k: v for k, v in d.items() if k in valid_fields}
-            self.tasks[tid] = TaskProfile(**filtered)
-
-    def get_active_tasks(self, current_chapter: int = 99999, limit: int = 5) -> List[TaskProfile]:
-        """返回活跃任务（status=active 且 chapter_created <= current_chapter），按创建章节排序"""
-        active = [t for t in self.tasks.values()
-                  if t.status == "active" and t.chapter_created <= current_chapter]
-        active.sort(key=lambda t: t.chapter_created)
-        return active[:limit]
-
-    def add_task(self, task: TaskProfile):
-        self.tasks[task.id] = task
-        self._save_tasks()
-
-    def complete_task(self, task_id: str, chapter: int):
-        if task_id in self.tasks:
-            self.tasks[task_id].status = "completed"
-            self.tasks[task_id].chapter_completed = chapter
-            self._save_tasks()
-
-    def update_task_progress(self, task_id: str, progress: str):
-        if task_id in self.tasks:
-            self.tasks[task_id].progress = progress
-            self._save_tasks()
+    def save_style(self):
+        self.style_manager.save()
 
     def update_style(self, updates: dict):
-        """从 SETTINGS_JSON 的 style 字段更新风格锚点"""
-        changed = False
-        for k, v in updates.items():
-            if v and hasattr(self.style, k):
-                old = getattr(self.style, k, "")
-                if v != old and v not in str(old):
-                    setattr(self.style, k, v)
-                    changed = True
-        if changed:
-            self._save_style()
+        self.style_manager.update(updates)
+        self.style = self.style_manager.style
 
     def get_style_prompt(self) -> str:
-        """生成风格约束文本（注入到 Writer 和 Reviewer 的 prompt 中）"""
-        s = self.style
-        if not any([s.narrative_voice, s.sentence_rhythm, s.paragraph_pattern,
-                     s.rhetorical_devices, s.tone_words, s.forbidden_words]):
-            return "（未建立风格锚点，无需额外风格约束）"
-        lines = ["【全文风格锚点（⚠️ 必须遵守，防止文风前后不一致）】"]
-        if s.narrative_voice:
-            lines.append(f"  - 叙述视角：{s.narrative_voice}")
-        if s.sentence_rhythm:
-            lines.append(f"  - 句节奏：{s.sentence_rhythm}")
-        if s.paragraph_pattern:
-            lines.append(f"  - 段落结构：{s.paragraph_pattern}")
-        if s.rhetorical_devices:
-            lines.append(f"  - 常用修辞：{'、'.join(s.rhetorical_devices)}")
-        if s.tone_words:
-            lines.append(f"  - 语气词偏好：{'、'.join(s.tone_words)}")
-        if s.forbidden_words:
-            lines.append(f"  - 禁用词：{'、'.join(s.forbidden_words)}")
-        if s.dialect_markers:
-            lines.append(f"  - 方言特征：{s.dialect_markers}")
-        if s.example_snippets:
-            lines.append(f"  - 风格范例（{len(s.example_snippets)} 段）：")
-            for snippet in s.example_snippets[:2]:
-                lines.append(f"    「{snippet[:120]}...」")
-        if s.notes:
-            lines.append(f"  - 备注：{s.notes}")
-        return "\n".join(lines)
+        return self.style_manager.get_prompt()
+
+    # ========== 任务清单（委派给 TaskTracker）==========
+
+    def save_tasks(self):
+        self.task_tracker.save()
+
+    def _load_tasks(self):
+        self.task_tracker._load()
+        self.tasks = self.task_tracker.tasks
+
+    def get_active_tasks(self, current_chapter: int = 99999, limit: int = 5) -> List[TaskProfile]:
+        return self.task_tracker.get_active(current_chapter, limit)
+
+    def add_task(self, task: TaskProfile):
+        self.task_tracker.add(task)
+        self.tasks = self.task_tracker.tasks
+
+    def complete_task(self, task_id: str, chapter: int):
+        self.task_tracker.complete(task_id, chapter)
+        self.tasks = self.task_tracker.tasks
+
+    def update_task_progress(self, task_id: str, progress: str):
+        self.task_tracker.update_progress(task_id, progress)
+        self.tasks = self.task_tracker.tasks
 
     # ========== 导出（给可视化用）==========
 
@@ -830,28 +699,4 @@ class MemoryManager:
             score += 1
         return min(max(score, 1), 5)
 
-    def add_relationship(self, char_name: str, related_to: str, type: str,
-                         stance: str = "neutral", met_chapter: int = 0,
-                         met_context: str = "", key_events: List[str] = None,
-                         notes: str = ""):
-        if char_name not in self.characters:
-            return
-        char = self.characters[char_name]
-        char.relationships[related_to] = type
-        char.relationships_detail[related_to] = {
-            "type": type, "stance": stance, "met_chapter": met_chapter,
-            "met_context": met_context, "key_events": key_events or [], "notes": notes,
-        }
-        self._save_characters()
 
-    def update_relationship_event(self, char_name: str, related_to: str, event: str):
-        if char_name not in self.characters:
-            return
-        char = self.characters[char_name]
-        if related_to not in char.relationships_detail:
-            return
-        events = char.relationships_detail[related_to].get("key_events", [])
-        if event not in events:
-            events.append(event)
-            char.relationships_detail[related_to]["key_events"] = events
-            self._save_characters()

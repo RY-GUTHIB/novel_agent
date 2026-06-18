@@ -18,7 +18,7 @@ from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
 from novel_agent.llm.client import generate
 from .prompts import REVIEWER_SYSTEM_PROMPT, REVIEWER_USER_PROMPT
-import config
+
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +156,9 @@ class ReviewerAgent:
             "passed": verdict == "通过",
         }
 
-    def save_review_report(self, chapter: int, report: Dict, output_dir: str = None):
+    def save_review_report(self, chapter: int, report: Dict, output_dir: str):
         from pathlib import Path
-        out_dir = Path(output_dir or config.OUTPUT_DIR)
+        out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         report_path = out_dir / f"review_chapter_{chapter:03d}.md"
         with open(report_path, "w", encoding="utf-8") as f:

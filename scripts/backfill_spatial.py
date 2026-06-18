@@ -7,8 +7,8 @@ from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.models import LocationProfile
 from novel_agent.llm.client import generate
 
-config.set_project("苍穹独狼")
-continuity = ContinuityGuard()
+ctx = config.set_project("苍穹独狼")
+continuity = ContinuityGuard(data_dir=ctx.data_dir)
 
 # 读取所有章节
 import os

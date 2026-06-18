@@ -13,7 +13,6 @@ RRF（Reciprocal Rank Fusion）融合排序，
 
 import os
 import re
-import config
 from pathlib import Path
 from typing import List, Dict
 
@@ -21,10 +20,12 @@ from typing import List, Dict
 class RAGStore:
     """ChromaDB 向量存储 + BM25 关键词检索封装"""
 
-    def __init__(self, persist_dir: str = None, model_cache_dir: str = None):
-        self.persist_dir = str(Path(persist_dir or config.DATA_DIR) / "vector_db")
+    def __init__(self, persist_dir: str, top_k: int = 5, chunk_size: int = 500):
+        self.persist_dir = str(Path(persist_dir) / "vector_db")
+        self.top_k = top_k
+        self.chunk_size = chunk_size
         # 模型缓存目录（换电脑时只需复制此目录，避免重新下载）
-        model_cache = Path(model_cache_dir or config.DATA_DIR) / "models" / "sentence-transformers"
+        model_cache = Path(persist_dir) / "models" / "sentence-transformers"
         model_cache.mkdir(parents=True, exist_ok=True)
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(model_cache)
         self._client = None
@@ -156,12 +157,14 @@ class RAGStore:
         )
         self._bm25_dirty = True
 
-    def search(self, query: str, top_k: int = config.RAG_TOP_K,
+    def search(self, query: str, top_k: int = None,
                filter_chapter_lt: int = None,
                use_hybrid: bool = True) -> List[Dict]:
         """
         混合检索：向量 + BM25 → RRF 融合
         """
+        if top_k is None:
+            top_k = self.top_k
         self._init_client()
 
         where_clause = None
@@ -256,15 +259,19 @@ class RAGStore:
 
     def search_by_character(self, character_name: str,
                              current_chapter: int,
-                             top_k: int = config.RAG_TOP_K) -> List[str]:
+                             top_k: int = None) -> List[str]:
+        if top_k is None:
+            top_k = self.top_k
         query = f"{character_name} 的言行 状态 经历"
         results = self.search(query, top_k=top_k,
                              filter_chapter_lt=current_chapter)
         return [r["document"] for r in results]
 
     def search_by_location(self, location_name: str,
-                           current_chapter: int,
-                           top_k: int = config.RAG_TOP_K) -> List[str]:
+                            current_chapter: int,
+                            top_k: int = None) -> List[str]:
+        if top_k is None:
+            top_k = self.top_k
         query = f"{location_name} 地点 场景 描述"
         results = self.search(query, top_k=top_k,
                              filter_chapter_lt=current_chapter)
@@ -290,7 +297,9 @@ class RAGStore:
             results.append(self._bm25_docs[idx])
         return results
 
-    def _chunk_text(self, text: str, chunk_size: int = config.RAG_CHUNK_SIZE) -> List[str]:
+    def _chunk_text(self, text: str, chunk_size: int = None) -> List[str]:
+        if chunk_size is None:
+            chunk_size = self.chunk_size
         """智能切片：按段落分割"""
         paragraphs = re.split(r'\n\s*\n', text)
         chunks = []

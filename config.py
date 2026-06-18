@@ -8,6 +8,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 
 # ============ ProjectContext ============
@@ -39,26 +40,18 @@ class ProjectContext:
 
 
 # ============ 路径配置 ============
-BASE_DIR = Path(__file__).parent
-PROJECTS_ROOT = BASE_DIR / "projects"
+BASE_DIR = Path(os.getenv("NOVEL_AGENT_BASE_DIR", Path(__file__).parent))
+PROJECTS_ROOT = Path(os.getenv("NOVEL_AGENT_PROJECTS_ROOT", BASE_DIR / "projects"))
 
 # 当前激活的项目上下文
 _CURRENT_CTX: ProjectContext = None
 
-# 模块级路径变量（其他模块通过 config.DATA_DIR 访问，不要用 from import）
-# 读取 _CURRENT_CTX 的值，保持向后兼容
-DATA_DIR = BASE_DIR / "data"
-OUTPUT_DIR = BASE_DIR / "output"
-
-
 def set_project(project_name: str) -> ProjectContext:
-    """切换当前项目，更新 DATA_DIR / OUTPUT_DIR 和 _CURRENT_CTX。
+    """切换当前项目，更新 _CURRENT_CTX。
     返回 ProjectContext 对象，可显式传递给各服务构造函数。"""
-    global _CURRENT_CTX, DATA_DIR, OUTPUT_DIR
+    global _CURRENT_CTX
     ctx = ProjectContext.create(project_name)
     _CURRENT_CTX = ctx
-    DATA_DIR = ctx.data_dir
-    OUTPUT_DIR = ctx.output_dir
     return ctx
 
 
@@ -67,7 +60,7 @@ def get_project_context() -> ProjectContext:
     return _CURRENT_CTX
 
 
-def get_project_name():
+def get_project_name() -> Optional[str]:
     return _CURRENT_CTX.project_name if _CURRENT_CTX else None
 
 
@@ -120,8 +113,8 @@ RAG_CHUNK_SIZE = 500      # 文本切片大小（字）
 # ============ 连续性检查配置 ============
 TIME_JUMP_WARN_DAYS = 30   # 时间跳跃超过N天警告
 ENABLE_CONTINUITY_CHECK = True
-ENABLE_FORESHADOW_TRACK = True
+
 
 # ============ 可视化配置 ============
 # 离线模式：从 vendor/ 目录加载，不走 CDN
-VENDOR_DIR = BASE_DIR / "vendor"
+VENDOR_DIR = Path(os.getenv("NOVEL_AGENT_VENDOR_DIR", BASE_DIR / "vendor"))

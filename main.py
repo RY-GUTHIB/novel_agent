@@ -42,7 +42,7 @@ from novel_agent.cli.commands import (
     select_project, create_new_project, interactive_loop,
     cmd_write, cmd_review, cmd_viz, cmd_status,
     cmd_new, cmd_add_fs, cmd_resolve_fs, cmd_fs_map, cmd_list,
-    get_current_project_name, set_current_project,
+    get_current_project_name,
     init_services, check_api_key,
 )
 import config

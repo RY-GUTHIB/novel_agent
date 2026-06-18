@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from novel_agent.core.models import LocationProfile
+from novel_agent.core.file_utils import parse_chinese_number, parse_travel_time
 
 
 @dataclass
@@ -127,13 +128,13 @@ class SpacetimeGuard:
                 prev = e
                 break
 
-        if not prev or not prev.season:
+        if not prev:
             return violations
 
+        # 优先使用 TimelineEvent.season 字段，其次从 time_tag 中提取
         season_order = {"春": 1, "夏": 2, "秋": 3, "冬": 4}
-        prev_s = prev.season
 
-        # 找到上一章季节的序号
+        prev_s = prev.season or prev.time_tag
         prev_idx = None
         for s, idx in season_order.items():
             if s in prev_s:
@@ -169,21 +170,32 @@ class SpacetimeGuard:
         支持格式：
         - "第3日" → 3
         - "第15日" → 15
-        - "三日后" → 无法解析，返回 None
+        - "第三日" → 3
+        - "第十五天" → 15
+        - "三" → 3
+        - "三日后" → 3
         - "第一章-春" → 无法解析，返回 None
         """
-        # 匹配 "第N日"
-        m = re.match(r'第\s*(\d+)\s*日', time_tag)
+        # 匹配 "第N日" / "第N天"
+        m = re.match(r'第\s*([一二三四五六七八九十百零\d]+)\s*[日天]', time_tag)
         if m:
-            return int(m.group(1))
-        # 匹配 "第N天"
-        m = re.match(r'第\s*(\d+)\s*天', time_tag)
+            return parse_chinese_number(m.group(1))
+        # 匹配 "第三日" / "第十五天"（无"第"前缀）
+        m = re.match(r'([一二三四五六七八九十百零\d]+)\s*[日天]', time_tag.strip())
         if m:
-            return int(m.group(1))
+            return parse_chinese_number(m.group(1))
         # 匹配纯数字 "3" / "15"
         m = re.match(r'^(\d+)$', time_tag.strip())
         if m:
             return int(m.group(1))
+        # 匹配纯中文数字 "三" / "十五"
+        m = re.match(r'^([一二三四五六七八九十百零]+)$', time_tag.strip())
+        if m:
+            return parse_chinese_number(m.group(1))
+        # 匹配 "N日后" / "三日后"（相对时间，提取数值用于比较）
+        m = re.search(r'([一二三四五六七八九十百零\d]+)\s*[日天]后', time_tag)
+        if m:
+            return parse_chinese_number(m.group(1))
         return None
 
     # ====== 人物一致性检查 ======
@@ -266,56 +278,11 @@ class SpacetimeGuard:
                 return self._parse_time_value(e.time_tag)
         return None
 
-    def _parse_travel_days(self, travel_time: str) -> Optional[float]:
+    @staticmethod
+    def _parse_travel_days(travel_time: str) -> Optional[float]:
         """解析通行时间字符串为天数"""
-        travel_time = travel_time.strip()
-        # "2日" / "2天"
-        m = re.match(r'(\d+)\s*[日天]', travel_time)
-        if m:
-            return int(m.group(1))
-        # "半日"
-        if '半日' in travel_time or '半天' in travel_time:
-            return 0.5
-        # "1时辰" ≈ 2小时 ≈ 0.125日
-        m = re.match(r'(\d+)\s*时辰', travel_time)
-        if m:
-            return int(m.group(1)) * 0.125
-        # "3日骑马" → 3
-        m = re.match(r'(\d+)', travel_time)
-        if m:
-            return int(m.group(1))
-        return None
-
-    def format_violations(self, violations: List[SpacetimeViolation]) -> str:
-        """格式化违规报告"""
-        if not violations:
-            return ""
-        fatal = [v for v in violations if v.severity == "fatal"]
-        warn = [v for v in violations if v.severity == "warning"]
-
-        lines = ["\n" + "=" * 60]
-        lines.append("  ⛔ 时空守卫检查失败 —— 拒绝生成")
-        lines.append("=" * 60)
-
-        if fatal:
-            lines.append(f"\n🔴 致命错误（{len(fatal)} 项）：")
-            for v in fatal:
-                lines.append(f"  ❌ {v.message}")
-
-        if warn:
-            lines.append(f"\n🟡 警告（{len(warn)} 项）：")
-            for v in warn:
-                lines.append(f"  ⚠️ {v.message}")
-
-        if fatal:
-            lines.append(f"\n💡 请先修复以上致命错误，再重新生成。")
-            lines.append(f"   如需调整空间地图：编辑 data/spacemap.json")
-            lines.append(f"   如需调整大纲时间：编辑 data/outline.json")
-        else:
-            lines.append(f"\n💡 以上为警告，生成将继续。")
-
-        lines.append("=" * 60)
-        return "\n".join(lines)
+        result = parse_travel_time(travel_time)
+        return result if result > 0 else None
 
     @staticmethod
     def auto_fix_spacemap(continuity, channels: list):
@@ -364,7 +331,7 @@ class SpacetimeGuard:
             if from_loc not in to_node.travel_time:
                 to_node.travel_time[from_loc] = est_time
 
-        continuity._save_spacemap()
+        continuity.save_spacemap()
 
     @staticmethod
     def _estimate_travel_time(spacemap: dict, from_node: LocationProfile,
@@ -383,7 +350,7 @@ class SpacetimeGuard:
             """从 node 的 travel_time 中收集到其他地点的天数（排除对方）"""
             for dest, tt in node.travel_time.items():
                 if dest != other_loc:
-                    days = SpacetimeGuard._parse_travel_days_static(tt)
+                    days = SpacetimeGuard._parse_travel_days(tt)
                     if days is not None:
                         existing_times.append(days)
 
@@ -417,23 +384,6 @@ class SpacetimeGuard:
         days = TYPE_TRAVEL.get(key, 1)
 
         return SpacetimeGuard._format_travel_days(days)
-
-    @staticmethod
-    def _parse_travel_days_static(travel_time: str) -> Optional[float]:
-        """与 _parse_travel_days 相同的逻辑，静态版本供 auto_fix 使用"""
-        travel_time = travel_time.strip()
-        m = re.match(r'(\d+)\s*[日天]', travel_time)
-        if m:
-            return int(m.group(1))
-        if '半日' in travel_time or '半天' in travel_time:
-            return 0.5
-        m = re.match(r'(\d+)\s*时辰', travel_time)
-        if m:
-            return int(m.group(1)) * 0.125
-        m = re.match(r'(\d+)', travel_time)
-        if m:
-            return int(m.group(1))
-        return None
 
     @staticmethod
     def _format_travel_days(days: float) -> str:

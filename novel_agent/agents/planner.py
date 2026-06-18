@@ -10,12 +10,15 @@ planner_agent.py - 大纲规划 Agent
 import json
 import re
 import logging
+from pathlib import Path
 from typing import Dict
 
+import config
 from novel_agent.core.models import CharacterProfile, LocationProfile, WorldSetting
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
+from novel_agent.core.file_utils import atomic_write_json
 from novel_agent.llm.client import generate, parse_json
 from .prompts import PLANNER_SYSTEM_PROMPT, OUTLINE_REFINE_PROMPT
 
@@ -28,11 +31,11 @@ class PlannerAgent:
     def __init__(self, memory_mgr: MemoryManager,
                   continuity_guard: ContinuityGuard,
                   foreshadow_tracker: ForeshadowTracker,
-                  ctx=None):
+                  ctx: config.ProjectContext):
         self.memory = memory_mgr
         self.continuity = continuity_guard
         self.foreshadow = foreshadow_tracker
-        self.ctx = ctx or config.get_project_context()
+        self.ctx = ctx
 
     def generate_outline(self, user_idea: str, genre: str = "玄幻", style: str = "热血") -> Dict:
         user_prompt = f"""请为以下创意生成完整长篇小说大纲：
@@ -123,6 +126,8 @@ class PlannerAgent:
             self.continuity.timeline.clear()
             self.continuity.spacemap.clear()
             self.continuity.character_locations.clear()
+            self.continuity.absolute_day = 0
+            self.continuity._time_updated_chapters = set()
             self.foreshadow.foreshadows.clear()
 
         self._init_world_settings(outline)
@@ -139,7 +144,7 @@ class PlannerAgent:
 
         self.memory.save_all()
         self.continuity.save_all()
-        self.foreshadow._save()
+        self.foreshadow.save()
 
     def _init_world_settings(self, outline: Dict):
         meta = outline.get("meta", {})
@@ -207,7 +212,7 @@ class PlannerAgent:
     def _init_factions(self, outline: Dict):
         """加载势力设定到 world_settings，支持大纲格式和 factions.json 格式"""
         # 优先处理 factions.json 格式（新格式，更详细）
-        factions_path = self.ctx.data_dir / "factions.json" if hasattr(self, 'ctx') else Path(config.DATA_DIR) / "factions.json"
+        factions_path = self.ctx.data_dir / "factions.json"
         if factions_path.exists():
             try:
                 with open(factions_path, "r", encoding="utf-8") as f:
@@ -352,58 +357,93 @@ class PlannerAgent:
     def _run_self_check(self, outline: Dict):
         """生成完成后强制自检"""
         issues = []
-        meta = outline.get("meta", {})
         volumes = outline.get("volumes", [])
+        issues.extend(self._check_chapter_count(volumes))
+        issues.extend(self._check_volume_arcs(volumes))
+        issues.extend(self._check_power_system(outline))
+        issues.extend(self._check_factions(outline))
+        issues.extend(self._check_characters(outline))
+        issues.extend(self._check_items(outline))
+        issues.extend(self._check_foreshadows(outline, volumes))
+        issues.extend(self._check_ending(outline, volumes))
+        issues.extend(self._check_defeat_recovery(outline, volumes))
+        issues.extend(self._check_side_quests(outline))
+        if issues:
+            print("  ⚠️ 大纲自检发现问题：")
+            for issue in issues:
+                print(f"    - {issue}")
+        else:
+            print("  ✅ 大纲自检全部通过")
 
-        # 1. 总章数 ≥ 50（按实际章节计数，非 meta 声明）
+    def _check_chapter_count(self, volumes: list) -> list:
+        """检查总章数≥50，每卷15-20章"""
+        issues = []
         all_vol_chs = []
-        for vol in outline.get("volumes", []):
-            all_vol_chs.extend(vol.get("chapters", []))
-        total_ch = len(all_vol_chs)
-        if total_ch < 50:
-            issues.append(f"实际总章数={total_ch}，未达 ≥50")
-
-        # 2. 每卷章节数 15-20
-        for vol in outline.get("volumes", []):
+        for vol in volumes:
             chs = vol.get("chapters", [])
+            all_vol_chs.extend(chs)
             if len(chs) < 15 or len(chs) > 20:
                 issues.append(f"第{vol.get('volume','?')}卷章节数={len(chs)}，不在15-20范围")
+        if len(all_vol_chs) < 50:
+            issues.append(f"实际总章数={len(all_vol_chs)}，未达 ≥50")
+        return issues
 
-        # 3. 每卷 arc 四节点均已分配
-        for vol in outline.get("volumes", []):
+    def _check_volume_arcs(self, volumes: list) -> list:
+        """检查每卷arc四节点和挫折反杀"""
+        issues = []
+        for vol in volumes:
             arc = vol.get("arc", {})
             for key in ("setback_chapter", "insight_chapter", "breakthrough_chapter", "new_challenge_chapter"):
                 if not arc.get(key):
                     issues.append(f"第{vol.get('volume','?')}卷缺少 arc.{key}")
+            setback = arc.get("setback_chapter", 0)
+            if setback == 0:
+                issues.append(f"第{vol.get('volume','?')}卷无挫折（被压制）章节")
+            else:
+                insight = arc.get("insight_chapter", 0)
+                breakthrough = arc.get("breakthrough_chapter", 0)
+                new_challenge = arc.get("new_challenge_chapter", 0)
+                has_comeback = any(x > setback for x in (insight, breakthrough, new_challenge) if x > 0)
+                if not has_comeback:
+                    issues.append(f"第{vol.get('volume','?')}卷挫折章{setback}后本卷内无反杀节点")
+        return issues
 
-        # 4. 力量体系境界数 ≤ 10
+    def _check_power_system(self, outline: dict) -> list:
+        """检查力量体系和保护者"""
+        issues = []
         ps = outline.get("power_system", [])
         if len(ps) > 10:
             issues.append(f"境界数={len(ps)}，超过10")
-
-        # 5. 保护者境界 ≥ 总境界数 - 2
         pn = outline.get("protector_network", {})
         if pn.get("direct") and ps:
             protector_lv = pn["direct"].get("level", 0)
             min_required = len(ps) - 2
             if protector_lv < min_required:
                 issues.append(f"直接保护者境界={protector_lv}，不足{min_required}（总境界-2）")
+        return issues
 
-        # 6. 所有势力 alliance_chain 无冲突（简单检测：同一势力不应同时出现在盟友和敌对中）
-        factions = outline.get("factions", [])
-        for f in factions:
+    def _check_factions(self, outline: dict) -> list:
+        """检查势力冲突"""
+        issues = []
+        for f in outline.get("factions", []):
             allies = set(f.get("allies", []))
             enemies = set(f.get("enemies", []))
             conflict = allies & enemies
             if conflict:
                 issues.append(f"势力'{f.get('name','')}'的盟友和敌对列表冲突：{conflict}")
+        return issues
 
-        # 7. 所有关键人物有 exit_point
+    def _check_characters(self, outline: dict) -> list:
+        """检查人物exit_point"""
+        issues = []
         for c in outline.get("characters", []):
             if not c.get("exit_point"):
                 issues.append(f"人物'{c.get('name','')}'缺少 exit_point")
+        return issues
 
-        # 8. 所有关键物品 giver 唯一
+    def _check_items(self, outline: dict) -> list:
+        """检查物品giver唯一性"""
+        issues = []
         givers = {}
         for item in outline.get("key_items", []):
             name = item.get("item_name", "")
@@ -412,17 +452,18 @@ class PlannerAgent:
                 if name in givers and givers[name] != giver:
                     issues.append(f"物品'{name}'重复赠与（{giver} vs {givers[name]}）")
                 givers[name] = giver
+        return issues
 
-        # 9. 伏笔总数 ≤ 30（检查精简后的实际存储，非原始 outline）
+    def _check_foreshadows(self, outline: dict, volumes: list) -> list:
+        """检查伏笔：总数≤30、每卷跨卷伏笔、跨卷不超过2卷"""
+        issues = []
         fs_count = len(self.foreshadow.foreshadows)
         if fs_count > 30:
             issues.append(f"伏笔总数={fs_count}，超过30")
-
-        # 10. 每卷至少1条跨卷伏笔（最后一卷除外，没有后续卷可跨）
-        total_vols = len(outline.get("volumes", []))
-        for i, vol in enumerate(outline.get("volumes", [])):
+        total_vols = len(volumes)
+        for i, vol in enumerate(volumes):
             if i + 1 == total_vols:
-                continue  # 最后一卷不要求跨卷伏笔
+                continue
             vol_chs = [c["chapter"] for c in vol.get("chapters", [])]
             has_cross = any(
                 fs.get("type") == "cross_volume" and fs.get("plant_chapter", 0) in vol_chs
@@ -430,8 +471,6 @@ class PlannerAgent:
             )
             if not has_cross:
                 issues.append(f"第{i+1}卷缺少跨卷伏笔")
-
-        # 11. 伏笔跨卷不超过2卷未回收：第1卷伏笔必须在第3卷结束前回收
         if len(volumes) >= 3:
             vol1_chs = [c["chapter"] for c in volumes[0].get("chapters", [])]
             vol3_last = max(c["chapter"] for c in volumes[2].get("chapters", [])) if volumes[2].get("chapters") else 0
@@ -439,124 +478,94 @@ class PlannerAgent:
                 if fs.get("plant_chapter", 0) in vol1_chs:
                     if fs.get("harvest_chapter", 0) > vol3_last:
                         issues.append(f"伏笔{fs.get('id','?')}（plant={fs.get('plant_chapter')}）在第3卷末（ch{vol3_last}）仍未回收，跨卷超过2卷")
+        return issues
 
-        # 12. 无自爆结局
+    def _check_ending(self, outline: dict, volumes: list) -> list:
+        """检查无自爆结局"""
+        issues = []
         last_vol = volumes[-1] if volumes else {}
         last_chs = last_vol.get("chapters", [])
         if last_chs:
             last_summary = last_chs[-1].get("summary", "")
             if any(kw in last_summary for kw in ("自爆", "同归于尽", "自爆身亡", "引爆")):
                 issues.append("结局疑似自爆/同归于尽")
+        return issues
 
-        # 13. 破而后立检测：真败关键词出现后，3章内必须遇到机缘，7章内完成破而后立（跨卷扫描）
+    @staticmethod
+    def _check_defeat_recovery(outline: dict, volumes: list) -> list:
+        """检查破而后立：真败→3章内机缘→7章内恢复"""
+        issues = []
         true_defeat_kw = ("修为被废", "被废修为", "经脉尽断", "丹田破碎", "沦为废人", "功力全失")
         chance_kw = ("机缘", "传承", "觉醒", "奇遇", "获得", "发现", "遇到", "传授", "认主")
         recovery_kw = ("重修", "突破", "破而后立", "重塑", "涅槃", "浴火", "恢复修为", "突破至", "踏入")
-        # 合并所有卷的章节为全局有序列表，支持跨卷扫描
         all_chapters_flat = []
         for vol in volumes:
             all_chapters_flat.extend(vol.get("chapters", []))
         for i, ch in enumerate(all_chapters_flat):
             summary = ch.get("summary", "")
             for kw in true_defeat_kw:
-                if kw in summary:
-                    ch_num = ch.get("chapter", 0)
-                    # 检查后续3章内是否遇到机缘（跨卷）
-                    met_chance = False
-                    for j in range(i + 1, min(i + 4, len(all_chapters_flat))):
-                        next_summary = all_chapters_flat[j].get("summary", "")
-                        if any(ck in next_summary for ck in chance_kw):
-                            met_chance = True
-                            break
-                    # 检查后续7章内是否完成破而后立（跨卷）
-                    fully_recovered = False
-                    for j in range(i + 1, min(i + 8, len(all_chapters_flat))):
-                        next_summary = all_chapters_flat[j].get("summary", "")
-                        if any(rk in next_summary for rk in recovery_kw):
-                            fully_recovered = True
-                            break
-                    if not met_chance:
-                        issues.append(
-                            f"第{ch_num}章出现'{kw}'但后续3章内未遇到机缘（传承/觉醒/奇遇等）"
-                        )
-                    elif not fully_recovered:
-                        issues.append(
-                            f"第{ch_num}章出现'{kw}'，3章内遇到了机缘但7章内未完成破而后立"
-                        )
+                if kw not in summary:
+                    continue
+                ch_num = ch.get("chapter", 0)
+                met_chance = any(
+                    any(ck in all_chapters_flat[j].get("summary", "") for ck in chance_kw)
+                    for j in range(i + 1, min(i + 4, len(all_chapters_flat)))
+                )
+                fully_recovered = any(
+                    any(rk in all_chapters_flat[j].get("summary", "") for rk in recovery_kw)
+                    for j in range(i + 1, min(i + 8, len(all_chapters_flat)))
+                )
+                if not met_chance:
+                    issues.append(f"第{ch_num}章出现'{kw}'但后续3章内未遇到机缘（传承/觉醒/奇遇等）")
+                elif not fully_recovered:
+                    issues.append(f"第{ch_num}章出现'{kw}'，3章内遇到了机缘但7章内未完成破而后立")
+        return issues
 
-        # 14. 每卷至少1次挫折（被压制）事件，且反杀在本卷内
-        for vol in volumes:
-            setback = vol.get("arc", {}).get("setback_chapter", 0)
-            if setback == 0:
-                issues.append(f"第{vol.get('volume','?')}卷无挫折（被压制）章节")
-            else:
-                # 检查反杀是否在本卷内：setback 之后、本卷结束前，应有 insight/breakthrough 或 new_challenge
-                arc = vol.get("arc", {})
-                insight = arc.get("insight_chapter", 0)
-                breakthrough = arc.get("breakthrough_chapter", 0)
-                new_challenge = arc.get("new_challenge_chapter", 0)
-                has_comeback = any(x > setback for x in (insight, breakthrough, new_challenge) if x > 0)
-                if not has_comeback:
-                    issues.append(f"第{vol.get('volume','?')}卷挫折章{setback}后本卷内无反杀节点")
-
-        # === 支线自检 ===
+    def _check_side_quests(self, outline: dict) -> list:
+        """检查支线：占比、主线接入、间隔、产出、关联"""
+        issues = []
         side_quests = outline.get("side_quests", [])
-        if side_quests:
-            # 15. 支线章节占比 10%-35%（降低下限，LLM 常产出不足）
-            total_chapters = meta.get("total_chapters", 0)
-            sq_chapters = sum(sq.get("end_chapter", sq.get("start_chapter", 0)) - sq.get("start_chapter", 0) + 1
-                             for sq in side_quests)
-            if total_chapters > 0:
-                sq_ratio = sq_chapters / total_chapters
-                if sq_ratio < 0.10:
-                    issues.append(f"支线占比={sq_ratio:.1%}，不足10%")
-                elif sq_ratio > 0.35:
-                    issues.append(f"支线占比={sq_ratio:.1%}，超过35%")
-
-            # 16. 每条支线结束后3章内，产出物被用于主线推进
-            for sq in side_quests:
-                end_ch = sq.get("end_chapter", 0)
-                connects = sq.get("connects_to_main", "")
-                if not connects:
-                    issues.append(f"支线{sq.get('id','?')}缺少 connects_to_main（如何接入主线）")
-                elif end_ch > 0 and "第" in connects:
-                    # 尝试提取 connects_to_main 中提到的章节号，验证是否在 end_ch+3 范围内
-                    conn_ch_match = re.search(r'第\s*(\d+)', connects)
-                    if conn_ch_match:
-                        conn_ch = int(conn_ch_match.group(1))
-                        if conn_ch > end_ch + 3:
-                            issues.append(f"支线{sq.get('id','?')}结束于第{end_ch}章，但 connects_to_main 提到第{conn_ch}章（超出3章窗口）")
-
-            # 17. 大型支线（>10章）之间间隔 ≥5章主线
-            large_sqs = [sq for sq in side_quests
-                        if sq.get("end_chapter", 0) - sq.get("start_chapter", 0) + 1 > 10]
-            large_sqs.sort(key=lambda x: x.get("start_chapter", 0))
-            for i in range(1, len(large_sqs)):
-                gap = large_sqs[i].get("start_chapter", 0) - large_sqs[i-1].get("end_chapter", 0) - 1
-                if gap < 5:
-                    issues.append(f"大型支线{large_sqs[i-1].get('id','?')}和{large_sqs[i].get('id','?')}之间仅隔{gap}章主线，需≥5章")
-
-            # 18. 所有支线产出物已写入对应模块（检查 output 字段完整性）
-            for sq in side_quests:
-                output = sq.get("output", {})
-                if not output.get("items") and not output.get("characters") and not output.get("rewards"):
-                    issues.append(f"支线{sq.get('id','?')}无任何产出物（items/characters/rewards均为空）")
-
-            # 19. 无支线脱离主线（放宽检测：只要有 connects_to_main 且非空即可，不再强制关键词）
-            for sq in side_quests:
-                connects = sq.get("connects_to_main", "")
-                summary = sq.get("summary", "")
-                main_hooks = ("为后续主线", "铺垫主线", "指向主线", "引出", "为卷末", "为下一阶段",
-                              "主线", "主角", "第", "章", "剧情", "推进")
-                if not connects and not any(hook in summary for hook in main_hooks):
-                    issues.append(f"支线{sq.get('id','?')}疑似脱离主线（connects_to_main为空且summary无主线关联词）")
-
-        if issues:
-            print("  ⚠️ 大纲自检发现问题：")
-            for issue in issues:
-                print(f"    - {issue}")
-        else:
-            print("  ✅ 大纲自检全部通过")
+        if not side_quests:
+            return issues
+        meta = outline.get("meta", {})
+        total_chapters = meta.get("total_chapters", 0)
+        sq_chapters = sum(
+            sq.get("end_chapter", sq.get("start_chapter", 0)) - sq.get("start_chapter", 0) + 1
+            for sq in side_quests
+        )
+        if total_chapters > 0:
+            sq_ratio = sq_chapters / total_chapters
+            if sq_ratio < 0.10:
+                issues.append(f"支线占比={sq_ratio:.1%}，不足10%")
+            elif sq_ratio > 0.35:
+                issues.append(f"支线占比={sq_ratio:.1%}，超过35%")
+        for sq in side_quests:
+            end_ch = sq.get("end_chapter", 0)
+            connects = sq.get("connects_to_main", "")
+            if not connects:
+                issues.append(f"支线{sq.get('id','?')}缺少 connects_to_main（如何接入主线）")
+            elif end_ch > 0 and "第" in connects:
+                conn_ch_match = re.search(r'第\s*(\d+)', connects)
+                if conn_ch_match:
+                    conn_ch = int(conn_ch_match.group(1))
+                    if conn_ch > end_ch + 3:
+                        issues.append(f"支线{sq.get('id','?')}结束于第{end_ch}章，但 connects_to_main 提到第{conn_ch}章（超出3章窗口）")
+            output = sq.get("output", {})
+            if not output.get("items") and not output.get("characters") and not output.get("rewards"):
+                issues.append(f"支线{sq.get('id','?')}无任何产出物（items/characters/rewards均为空）")
+            summary = sq.get("summary", "")
+            main_hooks = ("为后续主线", "铺垫主线", "指向主线", "引出", "为卷末", "为下一阶段",
+                          "主线", "主角", "第", "章", "剧情", "推进")
+            if not connects and not any(hook in summary for hook in main_hooks):
+                issues.append(f"支线{sq.get('id','?')}疑似脱离主线（connects_to_main为空且summary无主线关联词）")
+        large_sqs = [sq for sq in side_quests
+                    if sq.get("end_chapter", 0) - sq.get("start_chapter", 0) + 1 > 10]
+        large_sqs.sort(key=lambda x: x.get("start_chapter", 0))
+        for i in range(1, len(large_sqs)):
+            gap = large_sqs[i].get("start_chapter", 0) - large_sqs[i-1].get("end_chapter", 0) - 1
+            if gap < 5:
+                issues.append(f"大型支线{large_sqs[i-1].get('id','?')}和{large_sqs[i].get('id','?')}之间仅隔{gap}章主线，需≥5章")
+        return issues
 
     @staticmethod
     def _extract_json(text: str) -> Dict:
@@ -570,11 +579,9 @@ class PlannerAgent:
         )
 
     def save_outline_json(self, outline: Dict, filepath: str = None):
-        from pathlib import Path
         if filepath is None:
             filepath = self.memory.data_dir / "outline.json"
         else:
             filepath = Path(filepath)
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(outline, f, ensure_ascii=False, indent=2)
+        atomic_write_json(filepath, outline, indent=2)
+

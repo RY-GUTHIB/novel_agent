@@ -11,15 +11,17 @@ import re
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
-config.set_project('苍穹独狼')
+from pathlib import Path
+
+ctx = config.set_project('苍穹独狼')
 
 from novel_agent.core.memory import MemoryManager
 from novel_agent.llm.client import generate
 
-memory = MemoryManager()
+memory = MemoryManager(data_dir=ctx.data_dir)
 
 # 收集所有章节内容
-chapters_dir = os.path.join(config.DATA_DIR, '..', 'output', 'chapters')
+chapters_dir = os.path.join(str(ctx.data_dir), '..', 'output', 'chapters')
 chapter_files = sorted([
     f for f in os.listdir(chapters_dir) if f.startswith('chapter_') and f.endswith('.md')
 ])
@@ -105,7 +107,7 @@ try:
                 updated += 1
     
     if updated > 0:
-        memory._save_characters()
+        memory.save_characters()
         print(f"\n✅ 已更新 {updated} 个人物的修为")
     else:
         print("\n⚠️ 没有检测到修为变化（可能 LLM 未提取到有效信息）")

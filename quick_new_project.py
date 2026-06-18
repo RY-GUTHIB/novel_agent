@@ -57,7 +57,7 @@ def main():
 
     # 创建项目目录和 config.json
     project_dir = create_project(name, novel_type, style, concept)
-    config.set_project(name)
+    ctx = config.set_project(name)
 
     # 写入 .current_project
     from novel_agent.cli.commands import set_current_project
@@ -70,7 +70,7 @@ def main():
     print("   （这可能需要几分钟，请耐心等待）")
 
     check_api_key()
-    memory, continuity, foreshadow, _ = init_services()
+    memory, continuity, foreshadow, _ = init_services(ctx)
     generate_outline(memory, continuity, foreshadow, name, novel_type, style, concept)
     print("\n✅ 大纲生成完成！可以运行：python main.py write 开始写作")
 

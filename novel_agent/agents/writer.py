@@ -16,15 +16,13 @@ from typing import List
 
 from novel_agent.llm.client import generate, parse_json, parse_json_array
 from novel_agent.core.models import (
-    CharacterProfile, LocationProfile, WorldSetting,
-    PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
-    ItemProfile, TaskProfile, SettingsSchema, validate_settings_json,
-    generate_settings_json_example,
+    validate_settings_json, generate_settings_json_example,
 )
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
 from novel_agent.core.rag import RAGStore
+from novel_agent.core.settings_applier import SettingsApplier
 from novel_agent.core.validator import ContractValidator, format_violations_report
 from novel_agent.core.file_utils import atomic_write_json, atomic_write_text
 from .prompts import (
@@ -35,18 +33,19 @@ from .prompts import (
 logger = logging.getLogger(__name__)
 
 # 预编译正则（伏笔提取）
-_FS_EXTRACT_1 = re.compile(r'\[FS:\s*([一-龥][一-龥\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]')
-_FS_EXTRACT_2 = re.compile(r'FS：\s*([一-龥][一-龥\s，。！？、；：""''（）…—0-9-]{1,}?)(?:\r?\n|$)')
-_FS_EXTRACT_3 = re.compile(r'\[FS：\s*([一-龥][一-龥\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]')
+_FS_EXTRACT_1 = re.compile(r'\[FS:\s*([\u4e00-\u9fff][\u4e00-\u9fff\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]')
+_FS_EXTRACT_2 = re.compile(r'FS：\s*([\u4e00-\u9fff][\u4e00-\u9fff\s，。！？、；：""''（）…—0-9-]{1,}?)(?:\r?\n|$)')
+_FS_EXTRACT_3 = re.compile(r'\[FS：\s*([\u4e00-\u9fff][\u4e00-\u9fff\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]')
 
 
 class WriterAgent:
     """章节写作 Agent"""
 
     def __init__(self, memory_mgr: MemoryManager, continuity_guard: ContinuityGuard,
-                  foreshadow_tracker: ForeshadowTracker, rag_store: RAGStore = None,
-                  genre: str = "玄幻", style: str = "热血",
-                  ctx: config.ProjectContext = None):
+                  foreshadow_tracker: ForeshadowTracker,
+                  ctx: config.ProjectContext,
+                  rag_store: RAGStore = None,
+                  genre: str = "玄幻", style: str = "热血"):
         self.memory = memory_mgr
         self.continuity = continuity_guard
         self.foreshadow = foreshadow_tracker
@@ -54,15 +53,18 @@ class WriterAgent:
         self.genre = genre
         self.style = style
         self.validator = ContractValidator()
-        self.ctx = ctx or config.get_project_context()
+        self.ctx = ctx
+        self._applier = SettingsApplier(self.memory, self.continuity)
 
     # ========== 核心生成 ==========
 
     def write_chapter(self, chapter: int, title: str, summary: str,
                        time_tag: str, location: str, characters: List[str],
-                       temperature: float = config.TEMPERATURE,
+                       temperature: float = None,
                        logic_constraints: str = "") -> tuple:
         """返回 (content, settings_json) 以便审校通过后调用 finalize_chapter 回写设定"""
+        if temperature is None:
+            temperature = config.TEMPERATURE
         # 1. 冲突检测 + 预检
         char_loc_map = {char: location for char in characters}
         warnings = self.continuity.check_continuity(chapter, char_loc_map, time_tag)
@@ -89,18 +91,16 @@ class WriterAgent:
         # 4. 解析：分离正文和设定 JSON
         content, settings_json = self._split_output_and_settings(raw_output)
 
-        # 5. 审校前处理：只做 RAG 存储，不写任何设定（推迟到 finalize_chapter）
-        self._post_write(chapter, title, content, summary, time_tag, location, characters,
-                         settings_json=settings_json)
-
         return content, settings_json
 
     def revise_chapter(self, chapter: int, title: str, original_content: str,
                         review_report: str, summary: str, time_tag: str,
                         location: str, characters: List[str],
-                        temperature: float = 0.3,
+                        temperature: float = None,
                         logic_constraints: str = "") -> tuple:
         """返回 (content, settings_json) 以便审校通过后调用 finalize_chapter 回写设定"""
+        if temperature is None:
+            temperature = config.TEMPERATURE
         generation_contract = self.memory.get_generation_contract(chapter, characters)
         system_prompt = CHAPTER_REVISER_SYSTEM_PROMPT.format(word_target=config.CHAPTER_WORD_TARGET)
         user_prompt = self._build_reviser_user_prompt(
@@ -114,8 +114,6 @@ class WriterAgent:
 
         content, settings_json = self._split_output_and_settings(raw_output)
 
-        self._post_write(chapter, title, content, summary, time_tag, location, characters,
-                         settings_json=settings_json)
         return content, settings_json
 
     def patch_chapter(self, chapter: int, title: str, original_content: str,
@@ -286,9 +284,8 @@ class WriterAgent:
             prev_path = out_dir / f"chapter_{prev:03d}.md"
             if not prev_path.exists():
                 continue
-            text = self.load_chapter(prev)
-            if not text:
-                continue
+            with open(prev_path, "r", encoding="utf-8") as f:
+                text = f.read()
             # 去掉 Markdown 标题行（第X章 XXX）
             content_only = re.sub(r'^# .+?\n', '', text, count=1).strip()
             # 截断超长章节，保留首尾关键内容
@@ -447,17 +444,7 @@ class WriterAgent:
             print(f"  [WARN] RAG 检索失败: {e}")
         return "（无相关前文片段）"
 
-    # ========== 写后处理 ==========
-
-    def _post_write(self, chapter, title, content, summary, time_tag,
-                     location, characters, skip_scan=False, settings_json=None):
-        """审校前处理：只做 RAG 存储（无副作用），所有设定回写推迟到 finalize_chapter"""
-        # RAG 存储（审校前就可以存，不影响数据正确性）
-        if self.rag:
-            try:
-                self.rag.add_chapter(chapter, title, content)
-            except (IOError, OSError, json.JSONDecodeError, ValueError) as e:
-                print(f"  [WARN] RAG 存储失败: {e}")
+    # ========== 最终回写 ==========
 
     def finalize_chapter(self, chapter: int, content: str, summary: str,
                          time_tag: str, location: str, characters: list,
@@ -495,7 +482,7 @@ class WriterAgent:
 
         # 1. 应用所有设定（人物/物品/位置/势力/世界设定/场景事件）
         if parsed and isinstance(parsed, dict):
-            self._apply_all_settings(parsed, chapter)
+            self._applier.apply_all(parsed, chapter)
 
         # 2. 连续性更新
         self.continuity.add_event(chapter=chapter, time_tag=time_tag, event=summary,
@@ -530,52 +517,113 @@ class WriterAgent:
             print(f"  [伏笔回收] 自动回收 {resolved_count} 个伏笔")
         if new_fs:
             print(f"  [伏笔提取] 提取 {len(new_fs)} 个新伏笔")
-        self.foreshadow._save()
+        self.foreshadow.save()
 
-        # 4. 更新伏笔总览
+        # 4. RAG 存储（审校通过后才写入向量库，防止失败章节污染检索）
+        if self.rag:
+            try:
+                self.rag.add_chapter(chapter, title, content)
+            except (IOError, OSError, json.JSONDecodeError, ValueError) as e:
+                print(f"  [WARN] RAG 存储失败: {e}")
+
+        # 5. 更新伏笔总览
         try:
             self.foreshadow.export_to_markdown()
         except (IOError, OSError) as e:
             print(f"  [WARN] 伏笔总览导出失败: {e}")
 
+    def review_loop(self, reviewer, chapter, title, content, summary, time_tag, location, characters, settings_json=None, logic_constraints=""):
+        max_revisions = 3
+        prev_score = None
+        no_improvement_count = 0
+        for rev in range(max_revisions + 1):
+            report = reviewer.review_chapter(chapter, title, content,
+                                              logic_constraints=logic_constraints,
+                                              characters=characters)
+            print(f"\n📋 审校报告（第{rev+1}次）：")
+            print(report["raw_text"][:2000])
+            print(f"\n结论：{report['verdict']} | 总分：{report['overall_score']}")
+
+            if report["passed"]:
+                print("\n✅ 审校通过！")
+                break
+
+            if rev >= max_revisions:
+                print(f"\n⚠️ 已达最大修订次数（{max_revisions}），接受当前版本")
+                break
+
+            if prev_score is not None and report["overall_score"] <= prev_score:
+                no_improvement_count += 1
+            else:
+                no_improvement_count = 0
+
+            if no_improvement_count >= 2:
+                print(f"\n⚠️ 连续{no_improvement_count}次修订分数未提升，跳过修订直接终止")
+                break
+
+            print(f"\n🔧 根据审校意见自动修改（第{rev+1}次修订）...")
+
+            if report.get("patches"):
+                print(f"  🎯 定向修补模式：发现 {len(report['patches'])} 个可定位问题")
+                patched = self.patch_chapter(
+                    chapter=chapter, title=title, original_content=content,
+                    patches=report["patches"], summary=summary, characters=characters,
+                )
+                if patched:
+                    content = patched
+                    print("  定向修补完成，重新审校...")
+                    prev_score = report["overall_score"]
+                    continue
+                else:
+                    print("  ⚠️ 定向修补失败，回退整章重写")
+
+            content, settings_json = self.revise_chapter(
+                chapter=chapter, title=title, original_content=content,
+                review_report=report["raw_text"], summary=summary,
+                time_tag=time_tag, location=location, characters=characters,
+                logic_constraints=logic_constraints,
+            )
+            print("  修订完成，重新审校...")
+
+            prev_score = report["overall_score"]
+
+        self.finalize_chapter(
+            chapter=chapter, content=content, summary=summary,
+            time_tag=time_tag, location=location, characters=characters,
+            settings_json=settings_json,
+        )
+        return content, settings_json
+
     # ========== 输出解析 ==========
 
     def _split_output_and_settings(self, raw_output: str) -> tuple:
-        """从 LLM 输出中分离正文和设定 JSON，同时剥离自检段"""
-        # 剥离 PRE_FLIGHT_CHECK 自检段（不写入最终文件）
+        """从 LLM 输出中分离正文和设定 JSON，同时剥离 PRE_FLIGHT_CHECK 自检段"""
         flight_marker = "===PRE_FLIGHT_CHECK==="
         settings_marker = "===SETTINGS_JSON==="
-        if flight_marker in raw_output:
-            # 正文在自检段之前，SETTINGS_JSON 在之后（或没有）
-            pre_flight = raw_output.split(flight_marker, 1)[0]
-            post_flight = raw_output.split(flight_marker, 1)[1]
-            if settings_marker in post_flight:
-                # 正文 + SETTINGS_JSON（自检段在中间，丢弃）
-                raw_output = pre_flight + "\n" + post_flight
-            else:
-                # 没有 SETTINGS_JSON，正文在自检段之前
-                raw_output = pre_flight
 
-        separator = settings_marker
-        if separator in raw_output:
-            parts = raw_output.split(separator, 1)
-            content = parts[0].strip()
-            settings_text = parts[1].strip()
-            # 移除可能的 ```json ... ``` 包裹
+        # 正文始终在 ===PRE_FLIGHT_CHECK=== 之前（如果存在）
+        if flight_marker in raw_output:
+            content_part = raw_output.split(flight_marker, 1)[0]
+        else:
+            content_part = raw_output
+
+        # SETTINGS_JSON 在 ===SETTINGS_JSON=== 之后（如果存在）
+        if settings_marker in raw_output:
+            _, after = raw_output.split(settings_marker, 1)
+            settings_text = after.strip()
             settings_text = re.sub(r'^```json\s*', '', settings_text)
             settings_text = re.sub(r'\s*```$', '', settings_text)
             settings_json = parse_json(settings_text)
             if settings_json:
-                print(f"  [合并解析] 正文 {len(content)} 字，设定 JSON 解析成功")
-                return content, settings_json
+                print(f"  [合并解析] 正文 {len(content_part)} 字，设定 JSON 解析成功")
+                return content_part.strip(), settings_json
             else:
-                # 解析失败时保存原始 settings_text 到文件，方便排查
                 self._save_failed_settings(settings_text)
-                print(f"  [合并解析] 正文 {len(content)} 字，设定 JSON 解析失败，已保存原始文本到 debug_settings.txt")
-                return content, None
+                print(f"  [合并解析] 正文 {len(content_part)} 字，设定 JSON 解析失败，已保存原始文本到 debug_settings.txt")
+                return content_part.strip(), None
         else:
-            print(f"  [合并解析] 未找到分隔符，正文 {len(raw_output)} 字")
-            return raw_output, None
+            print(f"  [合并解析] 未找到分隔符，正文 {len(content_part)} 字")
+            return content_part.strip(), None
 
     def _save_failed_settings(self, settings_text: str):
         """保存解析失败的 SETTINGS_JSON 原始文本，方便排查问题"""
@@ -597,28 +645,6 @@ class WriterAgent:
             f.write(f"末尾50字符: {settings_text[-50:]}\n")
             f.write(f"{'='*60}\n")
 
-    def _apply_all_settings(self, parsed: dict, chapter: int):
-        """统一回写所有设定（人物/物品/位置/势力/世界设定/场景事件/连续性）。
-        只应在审校通过后由 finalize_chapter 调用。以后有新设定类型，统一加在这里。"""
-        if not parsed:
-            return
-        try:
-            self._apply_characters(parsed.get("characters", []), chapter)
-            self._apply_world_settings(parsed.get("world_settings", []), chapter)
-            self._apply_locations(parsed.get("locations", []), chapter)
-            self._apply_spatial_movements(parsed.get("spatial_movements", []), chapter)
-            self._apply_spacemap_updates(parsed.get("spacemap_updates", []))
-            self._apply_plot_rules(parsed.get("plot_rules", []), chapter)
-            self._apply_character_knowledge(parsed.get("character_knowledge", []), chapter)
-            self._apply_sect_factions(parsed.get("sect_factions", []), chapter)
-            self._apply_scene_events(parsed.get("scene_events", []), chapter)
-            self._apply_items(parsed.get("items", []), chapter)
-            self._apply_tasks(parsed.get("tasks", []), chapter)
-            self._apply_timeline_events(parsed.get("timeline_events", []), chapter)
-            self._apply_style(parsed.get("style", {}))
-        except (KeyError, ValueError, TypeError, AttributeError) as e:
-            print(f"  [WARN] 设定回写失败: {e}")
-
     # ========== 伏笔提取 ==========
 
     def _extract_foreshadows(self, content: str, chapter: int) -> List[str]:
@@ -632,414 +658,6 @@ class WriterAgent:
         results.extend(_FS_EXTRACT_2.findall(content))
         results.extend(_FS_EXTRACT_3.findall(content))
         return list(set(results))
-
-    # ========== 设定提取（已合并到写作 prompt 的 ===SETTINGS_JSON=== 输出，以下方法已废弃）==========
-    # _extract_and_save_world_settings 和 _call_settings_extractor 已移除，使用 _apply_settings 代替
-
-    def _apply_characters(self, items: list, chapter: int):
-        new_count = updated_count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name", "").strip()
-            is_new = item.get("is_new", False)
-            updates = item.get("updates", {})
-
-            if is_new:
-                new_char = CharacterProfile(
-                    name=name, gender=updates.get("gender", ""), age=updates.get("age", ""),
-                    appearance=updates.get("appearance", ""), personality=updates.get("personality", ""),
-                    background=updates.get("background", ""), goals=updates.get("goals", ""),
-                    speaking_style=updates.get("speaking_style", ""), abilities=updates.get("abilities", []),
-                    relationships=updates.get("relationships", {}), status=updates.get("status", "alive"),
-                    first_appeared=chapter, arc=updates.get("arc", ""), notes=updates.get("notes", ""),
-                )
-                for other, ctx in updates.get("relationship_contexts", {}).items():
-                    if isinstance(ctx, dict):
-                        new_char.relationships_detail[other] = ctx
-                self.memory.add_character(new_char)
-                new_count += 1
-            elif name in self.memory.characters:
-                char = self.memory.characters[name]
-                for ab in updates.get("abilities", []):
-                    if ab and ab not in char.abilities:
-                        char.abilities.append(ab)
-                for other, rel in updates.get("relationships", {}).items():
-                    if other and rel:
-                        char.relationships[other] = rel
-                for other, ctx in updates.get("relationship_contexts", {}).items():
-                    if isinstance(ctx, dict) and other:
-                        if other in char.relationships_detail:
-                            existing = char.relationships_detail[other]
-                            for k, v in ctx.items():
-                                if k == "key_events" and isinstance(v, list):
-                                    for evt in v:
-                                        if evt not in existing.get("key_events", []):
-                                            existing.setdefault("key_events", []).append(evt)
-                                elif v:
-                                    existing[k] = v
-                        else:
-                            char.relationships_detail[other] = ctx
-                for field_name in ["cultivation", "current_location", "appearance", "personality", "status",
-                                    "goals", "notes", "core_values", "core_desire", "core_fear",
-                                    "flaw", "alignment", "background", "speaking_style", "faction", "faction_status"]:
-                    val = updates.get(field_name, "")
-                    if val:
-                        setattr(char, field_name, val)
-                # 处理技能更新
-                for skill_data in updates.get("learned_skills", []):
-                    if isinstance(skill_data, dict):
-                        skill_name = skill_data.get("skill", "")
-                        if skill_name:
-                            # 检查是否已存在该技能
-                            existing = next((s for s in char.learned_skills if s.get("skill") == skill_name), None)
-                            if existing:
-                                # 更新现有技能（等级提升）
-                                existing["level"] = skill_data.get("level", existing.get("level", "初学"))
-                                existing["cost"] = skill_data.get("cost", existing.get("cost", ""))
-                                existing["note"] = skill_data.get("note", existing.get("note", ""))
-                            else:
-                                # 添加新技能
-                                char.learned_skills.append({
-                                    "skill": skill_name,
-                                    "source": skill_data.get("source", "未知"),
-                                    "level": skill_data.get("level", "初学"),
-                                    "cost": skill_data.get("cost", ""),
-                                    "note": skill_data.get("note", ""),
-                                })
-                # 技能更新后立即保存，确保原子性
-                self.memory._save_characters()
-                updated_count += 1
-
-        if new_count or updated_count:
-            self.memory._save_characters()
-            parts = []
-            if new_count:
-                parts.append(f"新增 {new_count} 个人物")
-            if updated_count:
-                parts.append(f"更新 {updated_count} 个人物")
-            print(f"  [设定提取·人物] {', '.join(parts)}")
-
-    def _apply_world_settings(self, items: list, chapter: int):
-        count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            key, value = item.get("key", "").strip(), item.get("value", "").strip()
-            if not key or not value:
-                continue
-            if key in self.memory.world_settings:
-                old = self.memory.world_settings[key].value
-                if value not in old:
-                    self.memory.world_settings[key].value = old + "；" + value
-            else:
-                self.memory.add_world_setting(WorldSetting(key=key, value=value, chapter_introduced=chapter))
-                count += 1
-        if count:
-            self.memory._save_world_settings()
-            print(f"  [设定提取·世界] 新增 {count} 条世界设定")
-
-    def _apply_locations(self, items: list, chapter: int):
-        new_count = updated_count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name", "").strip()
-            is_new = item.get("is_new", False)
-            updates = item.get("updates", {})
-
-            if is_new:
-                self.memory.add_location(LocationProfile(
-                    name=name, description=updates.get("description", ""),
-                    type=updates.get("type", "city"), connected_to=updates.get("connected_to", []),
-                    first_appeared=chapter, notable_characters=updates.get("notable_characters", []),
-                    notes=updates.get("notes", ""),
-                ))
-                new_count += 1
-            elif name in self.memory.locations:
-                loc = self.memory.locations[name]
-                desc = updates.get("description", "")
-                if desc and desc not in loc.description:
-                    loc.description = loc.description.rstrip("。") + "；" + desc
-                for nc in updates.get("notable_characters", []):
-                    if nc and nc not in loc.notable_characters:
-                        loc.notable_characters.append(nc)
-                notes = updates.get("notes", "")
-                if notes:
-                    loc.notes = (loc.notes + "；" + notes) if loc.notes else notes
-                updated_count += 1
-
-        if new_count or updated_count:
-            self.memory._save_locations()
-            parts = []
-            if new_count:
-                parts.append(f"新增 {new_count} 个地点")
-            if updated_count:
-                parts.append(f"更新 {updated_count} 个地点")
-            print(f"  [设定提取·地点] {', '.join(parts)}")
-
-    def _apply_spatial_movements(self, items: list, chapter: int):
-        count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            char_name = item.get("character", "").strip()
-            to_loc = item.get("to_location", "").strip()
-            if not char_name or not to_loc:
-                continue
-            note_parts = [p for p in [item.get("travel_method", ""), item.get("travel_time", ""), item.get("note", "")] if p]
-            self.continuity.add_character_location(
-                chapter=chapter, character=char_name, location=to_loc,
-                scene=item.get("scene", ""), note="，".join(note_parts),
-            )
-            count += 1
-        if count:
-            self.continuity._save_character_locations()
-            print(f"  [设定提取·空间] 记录 {count} 条人物移动")
-
-    def _apply_spacemap_updates(self, items: list):
-        count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            from_loc = item.get("from_location", "").strip()
-            to_loc = item.get("to_location", "").strip()
-            if not from_loc or not to_loc:
-                continue
-            travel_time = item.get("travel_time", "")
-            is_bidir = item.get("is_bidirectional", True)
-
-            self._update_spacemap_edge(from_loc, to_loc, travel_time)
-            if is_bidir:
-                self._update_spacemap_edge(to_loc, from_loc, travel_time)
-            count += 1
-        if count:
-            self.continuity._save_spacemap()
-            print(f"  [设定提取·连通] 更新 {count} 条地点连通")
-
-    def _update_spacemap_edge(self, from_loc: str, to_loc: str, travel_time: str):
-        if from_loc in self.continuity.spacemap:
-            node = self.continuity.spacemap[from_loc]
-            if to_loc not in node.connected_to:
-                node.connected_to.append(to_loc)
-            if travel_time:
-                node.travel_time[to_loc] = travel_time
-        else:
-            self.continuity.add_location(LocationProfile(
-                name=from_loc, connected_to=[to_loc],
-                travel_time={to_loc: travel_time} if travel_time else {},
-            ))
-
-    def _apply_plot_rules(self, items: list, chapter: int):
-        count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            condition = item.get("condition", "").strip()
-            consequence = item.get("consequence", "").strip()
-            if not condition or not consequence:
-                continue
-            self.memory.add_plot_rule(PlotRule(
-                condition=condition, consequence=consequence,
-                rule_text=item.get("rule_text", "").strip() or f"若{condition}，则{consequence}",
-                chapter_introduced=chapter,
-                source_character=item.get("source_character", "").strip(),
-            ))
-            count += 1
-        if count:
-            print(f"  [设定提取·规则] 新增 {count} 条剧情规则")
-
-    def _apply_character_knowledge(self, items: list, chapter: int):
-        count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            char_name = item.get("character", "").strip()
-            knowledge = item.get("knowledge", "").strip()
-            if not char_name or not knowledge:
-                continue
-            self.memory.add_character_knowledge(CharacterKnowledge(
-                character=char_name, chapter_learned=chapter,
-                knowledge=knowledge, source=item.get("source", "未知").strip(),
-                detail=item.get("detail", "").strip(),
-            ))
-            count += 1
-        if count:
-            print(f"  [设定提取·认知] 新增 {count} 条角色认知")
-
-    def _apply_sect_factions(self, items: list, chapter: int):
-        new_count = updated_count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name", "").strip()
-            is_new = item.get("is_new", False)
-            updates = item.get("updates", {})
-            if not name:
-                continue
-            if is_new or name not in self.memory.sect_factions:
-                self.memory.add_sect_faction(SectFaction(
-                    name=name, type=updates.get("type", ""), description=updates.get("description", ""),
-                    strength=updates.get("strength", ""), hierarchy=updates.get("hierarchy", []),
-                    key_members=updates.get("key_members", []), allies=updates.get("allies", []),
-                    enemies=updates.get("enemies", []), location=updates.get("location", ""),
-                    rules=updates.get("rules", []), first_appeared=chapter, notes=updates.get("notes", ""),
-                ))
-                new_count += 1
-            else:
-                self.memory.update_sect_faction(name, **{k: v for k, v in updates.items() if v})
-                updated_count += 1
-
-        if new_count or updated_count:
-            parts = []
-            if new_count:
-                parts.append(f"新增 {new_count} 个势力")
-            if updated_count:
-                parts.append(f"更新 {updated_count} 个势力")
-            print(f"  [设定提取·势力] {', '.join(parts)}")
-
-    def _apply_scene_events(self, items: list, chapter: int):
-        count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            location = item.get("location", "").strip()
-            event = item.get("event", "").strip()
-            if not location or not event:
-                continue
-            self.memory.add_scene_event(SceneEvent(
-                chapter=chapter, location=location, scene=item.get("scene", ""),
-                event=event, characters=item.get("characters", []),
-                importance=item.get("importance", 1),
-            ))
-            count += 1
-        if count:
-            print(f"  [设定提取·场景] 新增 {count} 条场景事件")
-
-    def _apply_items(self, items: list, chapter: int):
-        """应用物品更新（方案1+2+5：从 SETTINGS_JSON 解析物品变化）"""
-        new_count = updated_count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name", "").strip()
-            if not name:
-                continue
-            is_new = item.get("is_new", False)
-            updates = item.get("updates", {})
-
-            if is_new:
-                self.memory.add_item(ItemProfile(
-                    name=name,
-                    type=updates.get("type", ""),
-                    description=updates.get("description", ""),
-                    first_appeared=chapter,
-                    first_giver=updates.get("first_giver", ""),
-                    current_holder=updates.get("current_holder", ""),
-                    prohibited_actions=["give_again_by_other", "duplicate"],
-                    status=updates.get("status", "active"),
-                ))
-                new_count += 1
-            elif name in self.memory.items:
-                existing = self.memory.items[name]
-                old_holder = existing.current_holder
-                new_holder = updates.get("current_holder", "")
-                if new_holder and new_holder != old_holder:
-                    # 物品转移
-                    self.memory.transfer_item(
-                        name, from_holder=old_holder, to_holder=new_holder,
-                        chapter=chapter, reason=updates.get("description", ""),
-                    )
-                else:
-                    # 非转移性更新
-                    for k in ["type", "description", "status", "notes"]:
-                        v = updates.get(k, "")
-                        if v:
-                            setattr(existing, k, v)
-                updated_count += 1
-
-        if new_count or updated_count:
-            self.memory._save_items()
-            parts = []
-            if new_count:
-                parts.append(f"新增 {new_count} 个物品")
-            if updated_count:
-                parts.append(f"更新 {updated_count} 个物品")
-            print(f"  [设定提取·物品] {', '.join(parts)}")
-
-    def _apply_tasks(self, tasks: list, chapter: int):
-        """应用任务更新（从 SETTINGS_JSON 解析任务变化）"""
-        new_count = updated_count = 0
-        for t in tasks:
-            if not isinstance(t, dict):
-                continue
-            task_id = t.get("id", "").strip()
-            if not task_id:
-                continue
-            if task_id not in self.memory.tasks:
-                # 新任务：按 task_id 是否存在判断，不依赖 is_new 字段
-                self.memory.add_task(TaskProfile(
-                    id=task_id,
-                    name=t.get("name", ""),
-                    description=t.get("description", ""),
-                    status=t.get("status", "active"),
-                    chapter_created=chapter,
-                    chapter_completed=None,
-                    progress=t.get("progress", ""),
-                    related_items=t.get("related_items", []),
-                    related_characters=t.get("related_characters", []),
-                ))
-                new_count += 1
-            elif task_id in self.memory.tasks:
-                # SETTINGS_JSON 使用扁平结构（模板定义），
-                # 但部分历史数据可能使用 nested updates。
-                # 优先读扁平字段，fallback 到 updates。
-                updates = t.get("updates", {})
-                prog = t.get("progress", "") or updates.get("progress", "")
-                status = t.get("status", "") or updates.get("status", "")
-                if prog:
-                    self.memory.update_task_progress(task_id, prog)
-                if status == "completed":
-                    self.memory.complete_task(task_id, chapter)
-                updated_count += 1
-
-        if new_count or updated_count:
-            self.memory._save_tasks()
-            parts = []
-            if new_count:
-                parts.append(f"新增 {new_count} 个任务")
-            if updated_count:
-                parts.append(f"更新 {updated_count} 个任务")
-            print(f"  [设定提取·任务] {', '.join(parts)}")
-
-    def _apply_timeline_events(self, events: list, chapter: int):
-        """应用时间线事件（从 SETTINGS_JSON 的 timeline_events 字段）"""
-        count = 0
-        for evt in events:
-            if not isinstance(evt, dict):
-                continue
-            time_tag = evt.get("time_tag", "")
-            event_desc = evt.get("event", "").strip()
-            if not event_desc:
-                continue
-            chars = evt.get("characters", [])
-            loc = evt.get("location", "")
-            importance = evt.get("importance", 1)
-            self.continuity.add_event(
-                chapter=chapter, time_tag=time_tag, event=event_desc,
-                characters=chars, location=loc, importance=importance,
-            )
-            count += 1
-        if count:
-            print(f"  [设定提取·时间线] 新增 {count} 个时间线事件")
-
-    # ========== JSON 解析工具 ==========
-
-    def _apply_style(self, style_updates: dict):
-        """应用风格锚点更新（从 SETTINGS_JSON 的 style 字段）"""
-        if not style_updates or not isinstance(style_updates, dict):
-            return
-        self.memory.update_style(style_updates)
 
     def save_chapter(self, chapter: int, title: str, content: str, output_dir: str = None):
         out_dir = Path(output_dir or self.ctx.output_dir)

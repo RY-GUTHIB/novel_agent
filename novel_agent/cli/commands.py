@@ -8,7 +8,12 @@ import glob
 import json
 import re
 import sys
+from collections import namedtuple
 from pathlib import Path
+
+
+# 服务集合：所有 init_services 返回的具名元组，可按名称或位置访问
+_Services = namedtuple("Services", ["memory", "continuity", "foreshadow", "rag"])
 
 import config
 from novel_agent.project import (
@@ -92,8 +97,8 @@ def create_new_project() -> str:
     print(f"\n✅ 项目「{name}」已创建！")
 
     # 创建项目 MEMORY.md
-    config.set_project(name)
-    _create_project_memory(name)
+    ctx = config.set_project(name)
+    _create_project_memory(name, str(ctx.data_dir))
     print(f"   类型：{novel_type} | 风格：{style}")
     print(f"   目录：{project_dir}")
 
@@ -136,7 +141,7 @@ def _input_choice(label: str, options: list) -> str:
     return result
 
 
-def _input_concept() -> str:
+def _input_concept(retries: int = 3) -> str:
     print(f"\n💡 说说你的总体构思（可以是一句话，也可以是几段描述）：")
     print("   （输入空行结束）")
     lines = []
@@ -146,25 +151,33 @@ def _input_concept() -> str:
             break
         lines.append(line)
     concept = "\n".join(lines)
-    if not concept.strip():
-        print("❌ 构思不能为空，至少说点什么吧")
-        return _input_concept()
-    return concept
+    if concept.strip():
+        return concept
+    if retries > 0:
+        print(f"❌ 构思不能为空，还有 {retries} 次机会")
+        return _input_concept(retries - 1)
+    print("❌ 已耗尽重试次数")
+    return "（空构思）"
 
 
 # =========== 初始化 ===========
 
 def init_services(ctx: config.ProjectContext = None):
-    """初始化所有服务。传 ProjectContext 显式指定项目路径，否则用 config.DATA_DIR 默认值。"""
+    """初始化所有服务。传 ProjectContext 显式指定项目路径，否则从 config.get_project_context() 获取。"""
     from novel_agent.core.rag import RAGStore
-    if ctx:
-        return (
-            MemoryManager(data_dir=ctx.data_dir),
-            ContinuityGuard(data_dir=ctx.data_dir),
-            ForeshadowTracker(data_dir=ctx.data_dir),
-            RAGStore(persist_dir=str(ctx.data_dir)),
-        )
-    return MemoryManager(), ContinuityGuard(), ForeshadowTracker(), RAGStore()
+    if ctx is None:
+        ctx = config.get_project_context()
+        if ctx is None:
+            raise RuntimeError("init_services: 未提供 ProjectContext 且未设置当前项目")
+    return _Services(
+        memory=MemoryManager(data_dir=ctx.data_dir),
+        continuity=ContinuityGuard(data_dir=ctx.data_dir,
+                                   enable_continuity_check=config.ENABLE_CONTINUITY_CHECK),
+        foreshadow=ForeshadowTracker(data_dir=ctx.data_dir),
+        rag=RAGStore(persist_dir=str(ctx.data_dir),
+                     top_k=config.RAG_TOP_K,
+                     chunk_size=config.RAG_CHUNK_SIZE),
+    )
 
 
 def generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept, ctx=None):
@@ -276,7 +289,7 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=None, chapt
         existing = glob.glob(str(ctx.chapters_dir / "chapter_*.md"))
         chapter = len(existing) + 1
 
-    ch_data = next((c for c in chapter_plan if c["chapter"] == chapter), None)
+    ch_data = next((c for c in chapter_plan if c.get("chapter") == chapter), None)
     if ch_data is None:
         print(f"❌ 大纲中没有第 {chapter} 章的计划")
         return
@@ -296,10 +309,9 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=None, chapt
     print("\n🤖 正在生成，请稍候（约1-3分钟）...\n")
 
     meta = outline.get("meta", {})
-    writer = WriterAgent(memory, continuity, foreshadow, rag_store=rag,
+    writer = WriterAgent(memory, continuity, foreshadow, ctx=ctx, rag_store=rag,
                          genre=meta.get("genre", outline.get("genre", "玄幻")),
-                         style=meta.get("style", outline.get("style", "热血")),
-                         ctx=ctx)
+                         style=meta.get("style", outline.get("style", "热血")))
     reviewer = ReviewerAgent(memory, continuity, foreshadow)
 
     # ===== 生成前预检 =====
@@ -343,9 +355,10 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=None, chapt
                                         logic_constraints=logic_constraints)
 
         # 审校循环
-        content, settings_json = _review_loop(writer, reviewer, chapter, title, content, summary,
-                                               time_tag, location, characters, settings_json,
-                                               logic_constraints=logic_constraints)
+        content, settings_json = writer.review_loop(reviewer, chapter=chapter, title=title, content=content,
+                                                      summary=summary, time_tag=time_tag, location=location,
+                                                      characters=characters, settings_json=settings_json,
+                                                      logic_constraints=logic_constraints)
         # 审校结束后写最终版到磁盘（循环内不再写中间版本）
         writer.save_chapter(chapter, title, content)
 
@@ -391,71 +404,7 @@ def _get_chapter_plan(outline: dict) -> list:
     return outline.get("chapter_plan", [])
 
 
-def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, location, characters, settings_json=None, logic_constraints=""):
-    max_revisions = 3
-    prev_score = None
-    no_improvement_count = 0
-    for rev in range(max_revisions + 1):
-        report = reviewer.review_chapter(chapter, title, content,
-                                          logic_constraints=logic_constraints,
-                                          characters=characters)
-        print(f"\n📋 审校报告（第{rev+1}次）：")
-        print(report["raw_text"][:2000])
-        print(f"\n结论：{report['verdict']} | 总分：{report['overall_score']}")
 
-        if report["passed"]:
-            print("\n✅ 审校通过！")
-            break
-
-        if rev >= max_revisions:
-            print(f"\n⚠️ 已达最大修订次数（{max_revisions}），接受当前版本")
-            break
-
-        # 收敛检测：本次审校的分数 vs 上次修订后的分数
-        if prev_score is not None and report["overall_score"] <= prev_score:
-            no_improvement_count += 1
-        else:
-            no_improvement_count = 0
-
-        if no_improvement_count >= 2:
-            print(f"\n⚠️ 连续{no_improvement_count}次修订分数未提升，跳过修订直接终止")
-            break
-
-        print(f"\n🔧 根据审校意见自动修改（第{rev+1}次修订）...")
-        
-        # 优先尝试定向修补（省 token）
-        if report.get("patches"):
-            print(f"  🎯 定向修补模式：发现 {len(report['patches'])} 个可定位问题")
-            patched = writer.patch_chapter(
-                chapter=chapter, title=title, original_content=content,
-                patches=report["patches"], summary=summary, characters=characters,
-            )
-            if patched:
-                content = patched
-                # 定向修补不产生新设定，保留上次 settings_json
-                print("  定向修补完成，重新审校...")
-                prev_score = report["overall_score"]
-                continue
-            else:
-                print("  ⚠️ 定向修补失败，回退整章重写")
-
-        content, settings_json = writer.revise_chapter(
-            chapter=chapter, title=title, original_content=content,
-            review_report=report["raw_text"], summary=summary,
-            time_tag=time_tag, location=location, characters=characters,
-            logic_constraints=logic_constraints,
-        )
-        print("  修订完成，重新审校...")
-
-        prev_score = report["overall_score"]
-
-    # 审校通过/上限后，统一回写所有设定（人物/物品/位置/连续性/伏笔）
-    writer.finalize_chapter(
-        chapter=chapter, content=content, summary=summary,
-        time_tag=time_tag, location=location, characters=characters,
-        settings_json=settings_json,
-    )
-    return content, settings_json
 
 
 def cmd_review(memory, continuity, foreshadow, rag, project_name, ctx=None):
@@ -472,6 +421,7 @@ def cmd_review(memory, continuity, foreshadow, rag, project_name, ctx=None):
 
     outline_path = ctx.data_dir / "outline.json"
     title = f"第{chapter_num}章"
+    ch_data = None
     if outline_path.exists():
         with open(outline_path, "r", encoding="utf-8") as f:
             outline = json.load(f)
@@ -487,7 +437,7 @@ def cmd_review(memory, continuity, foreshadow, rag, project_name, ctx=None):
         report = reviewer.review_chapter(chapter_num, title, content,
                                           characters=ch_data.get("characters", []) if ch_data else [])
         print(report["raw_text"])
-        reviewer.save_review_report(chapter_num, report)
+        reviewer.save_review_report(chapter_num, report, output_dir=str(ctx.output_dir))
         print(f"\n📁 审校报告：{ctx.chapters_dir.parent}/review_chapter_{chapter_num:03d}.md")
         print(f"结论：{report['verdict']}")
     except Exception as e:
@@ -572,9 +522,10 @@ def cmd_add_fs(memory, continuity, foreshadow, rag, project_name):
         print(f"❌ 添加失败：{e}")
 
 
-def cmd_fs_map(memory, continuity, foreshadow, rag, project_name):
+def cmd_fs_map(memory, continuity, foreshadow, rag, project_name, ctx=None):
+    ctx = ctx or config.get_project_context()
     try:
-        path = foreshadow.export_to_markdown()
+        path = foreshadow.export_to_markdown(output_dir=ctx.output_dir)
         print(f"\n✅ 伏笔总览已生成：{path}")
         print(f"   总计 {len(foreshadow.foreshadows)} 个伏笔")
         print(f"   待回收 {len(foreshadow.get_pending())} 个")
@@ -678,7 +629,7 @@ def interactive_loop(project_name):
         elif cmd == "resolve-fs":
             cmd_resolve_fs(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "fs-map":
-            cmd_fs_map(memory, continuity, foreshadow, rag, project_name)
+            cmd_fs_map(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
         elif cmd == "switch":
             new_name = select_project()
             if new_name != project_name:
@@ -708,8 +659,8 @@ def interactive_loop(project_name):
 
 # =========== 辅助函数 ===========
 
-def rebuild_novel_md(output_dir: str = None):
-    out_dir = Path(output_dir or config.OUTPUT_DIR)
+def rebuild_novel_md(output_dir: str):
+    out_dir = Path(output_dir)
     chapters_dir = out_dir / "chapters"
     novel_path = out_dir / "novel.md"
     if not chapters_dir.exists():
@@ -728,14 +679,16 @@ def rebuild_novel_md(output_dir: str = None):
 def update_project_memory(project_name: str, memory: MemoryManager,
                           continuity: ContinuityGuard,
                           foreshadow: ForeshadowTracker,
-                          output_dir: str = None):
+                          output_dir: str):
     """自动更新 projects/<项目名>/MEMORY.md 的数据统计部分"""
     from datetime import datetime
 
     mem_path = config.PROJECTS_ROOT / project_name / "MEMORY.md"
     if not mem_path.exists():
         # 不存在则从模板创建
-        _create_project_memory(project_name)
+        ctx = config.get_project_context()
+        data_dir = str(ctx.data_dir) if ctx else str(config.PROJECTS_ROOT / project_name / "data")
+        _create_project_memory(project_name, data_dir)
         if not mem_path.exists():
             return
 
@@ -764,7 +717,7 @@ def update_project_memory(project_name: str, memory: MemoryManager,
     )
 
     # 更新数据统计
-    out_dir = Path(output_dir or config.OUTPUT_DIR)
+    out_dir = Path(output_dir)
     chapters_dir = out_dir / "chapters"
     written = len(glob.glob(str(chapters_dir / "chapter_*.md"))) if chapters_dir.exists() else 0
     resolved = len([fs for fs in foreshadow.foreshadows if fs.status == "resolved"])
@@ -786,7 +739,7 @@ def update_project_memory(project_name: str, memory: MemoryManager,
     mem_path.write_text(content, encoding="utf-8")
 
 
-def _create_project_memory(project_name: str, data_dir: str = None):
+def _create_project_memory(project_name: str, data_dir: str):
     """为项目创建初始 MEMORY.md 模板"""
     from datetime import datetime
 
@@ -850,9 +803,9 @@ def _create_project_memory(project_name: str, data_dir: str = None):
     print(f"  📄 已创建项目记忆文件：{mem_path}")
 
 
-def _get_novel_title(data_dir: str = None) -> str:
+def _get_novel_title(data_dir: str) -> str:
     """从 outline.json 读取小说标题"""
-    outline_path = Path(data_dir or config.DATA_DIR) / "outline.json"
+    outline_path = Path(data_dir) / "outline.json"
     if outline_path.exists():
         with open(outline_path, "r", encoding="utf-8") as f:
             outline = json.load(f)

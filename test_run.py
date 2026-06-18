@@ -56,13 +56,14 @@ except Exception as e:
 # ----------------------------------------------------------
 print("\n[初始化] 创建内存管理器、连续性守卫、伏笔追踪器...")
 try:
-    memory = MemoryManager()
-    continuity = ContinuityGuard()
-    foreshadow = ForeshadowTracker()
+    ctx = config.get_project_context()
+    memory = MemoryManager(data_dir=ctx.data_dir)
+    continuity = ContinuityGuard(data_dir=ctx.data_dir)
+    foreshadow = ForeshadowTracker(data_dir=ctx.data_dir)
 
     print("  [OK] 初始化完成")
-    print(f"  data_dir: {config.DATA_DIR}")
-    print(f"  output_dir: {config.OUTPUT_DIR}")
+    print(f"  data_dir: {ctx.data_dir}")
+    print(f"  output_dir: {ctx.output_dir}")
 except Exception as e:
     print(f"  [FAIL] 初始化失败: {e}")
     sys.exit(1)
@@ -157,7 +158,7 @@ print("\n[4/6] 保存数据到 JSON...")
 try:
     memory.save_all()
     continuity.save_all()
-    foreshadow._save()
+    foreshadow.save()
 
     print(f"  [OK] 数据保存成功")
     print(f"  人物档案: {len(memory.characters)} 个")
@@ -175,17 +176,18 @@ print("\n[5/6] 生成可视化...")
 try:
     viz_files = {}
 
-    timeline_path = generate_timeline_html(continuity, project_name=TEST_PROJECT)
+    output_dir = str(ctx.output_dir)
+    timeline_path = generate_timeline_html(continuity, output_path=output_dir, project_name=TEST_PROJECT)
     viz_files["时间线"] = timeline_path
 
-    charmap_path = generate_character_map_html(memory, project_name=TEST_PROJECT)
+    charmap_path = generate_character_map_html(memory, output_path=output_dir, project_name=TEST_PROJECT)
     viz_files["人物关系图"] = charmap_path
 
-    worldmap_path = generate_world_map_html(continuity, project_name=TEST_PROJECT)
+    worldmap_path = generate_world_map_html(continuity, output_path=output_dir, project_name=TEST_PROJECT)
     viz_files["世界地图"] = worldmap_path
 
     # 伏笔总览
-    fs_path = foreshadow.export_to_markdown()
+    fs_path = foreshadow.export_to_markdown(output_dir=output_dir)
     viz_files["伏笔总览"] = fs_path
 
     print(f"  [OK] 可视化生成成功！")

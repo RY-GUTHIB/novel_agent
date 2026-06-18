@@ -11,11 +11,11 @@ PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import set_project
-set_project("苍穹独狼")
+ctx = set_project("苍穹独狼")
 
 from novel_agent.core.memory import MemoryManager, CharacterKnowledge
 
-memory = MemoryManager()
+memory = MemoryManager(data_dir=ctx.data_dir)
 
 # 手动整理的关键角色认知（从Ch1-20中提取的重要认知变化）
 knowledge_data = [

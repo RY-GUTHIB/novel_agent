@@ -11,7 +11,6 @@ visualizer.py - 三大可视化生成器
 
 import json
 import re
-import config
 from pathlib import Path
 from typing import Dict
 
@@ -35,10 +34,27 @@ def _load_vendor(file_name: str) -> str:
     return cdn_map.get(file_name, "")
 
 
+def _vendor_tag(file_name: str, tag_type: str = "script") -> str:
+    """生成 vendor 文件的内嵌或CDN引用标签。
+    tag_type: 'script' 或 'style' """
+    content = _load_vendor(file_name)
+    is_inline = len(content) > 1000
+    if tag_type == "style":
+        if is_inline:
+            return f"<style>\n{content}\n</style>"
+        else:
+            return f'<link href="{content}" rel="stylesheet">'
+    else:
+        if is_inline:
+            return f"<script>\n{content}\n</script>"
+        else:
+            return f'<script src="{content}"></script>'
+
+
 # ============ 时间线可视化 ============
 
 def generate_timeline_html(continuity: ContinuityGuard,
-                           output_path: str = None,
+                           output_path: str,
                            project_name: str = "") -> str:
     """
     生成时间线 HTML（vis-timeline）
@@ -97,17 +113,8 @@ def generate_timeline_html(continuity: ContinuityGuard,
         })
 
     # 内嵌 CSS/JS
-    vis_css = _load_vendor("vis-timeline-graph2d.min.css")
-    vis_js = _load_vendor("vis-timeline-graph2d.min.js")
-    # 判断是内嵌还是CDN引用
-    if len(vis_css) > 1000:
-        css_tag = f"<style>\n{vis_css}\n</style>"
-    else:
-        css_tag = f'<link href="{vis_css}" rel="stylesheet">'
-    if len(vis_js) > 1000:
-        js_tag = f"<script>\n{vis_js}\n</script>"
-    else:
-        js_tag = f'<script src="{vis_js}"></script>'
+    css_tag = _vendor_tag("vis-timeline-graph2d.min.css", "style")
+    js_tag = _vendor_tag("vis-timeline-graph2d.min.js")
 
     # 生成 HTML
     title_prefix = f"{project_name} - " if project_name else ""
@@ -119,7 +126,7 @@ def generate_timeline_html(continuity: ContinuityGuard,
         title_prefix=title_prefix,
     )
 
-    out_path = Path(output_path or config.OUTPUT_DIR) / "timeline.html"
+    out_path = Path(output_path) / "timeline.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -130,8 +137,8 @@ def generate_timeline_html(continuity: ContinuityGuard,
 # ============ 人物关系图可视化 ============
 
 def generate_character_map_html(memory_mgr: MemoryManager,
-                                 output_path: str = None,
-                                 project_name: str = "") -> str:
+                                output_path: str,
+                                project_name: str = "") -> str:
     """
     生成人物关系图 HTML（vis-network 力导向图）
     节点 = 人物，边 = 关系
@@ -183,11 +190,7 @@ def generate_character_map_html(memory_mgr: MemoryManager,
         edge["arrows"] = {"to": {"enabled": True, "scaleFactor": 0.5}}
 
     # 内嵌 JS
-    vis_js = _load_vendor("vis-network.min.js")
-    if len(vis_js) > 1000:
-        js_tag = f"<script>\n{vis_js}\n</script>"
-    else:
-        js_tag = f'<script src="{vis_js}"></script>'
+    js_tag = _vendor_tag("vis-network.min.js")
 
     title_prefix = f"{project_name} - " if project_name else ""
     html = _CHARACTER_MAP_TEMPLATE.format(
@@ -197,7 +200,7 @@ def generate_character_map_html(memory_mgr: MemoryManager,
         title_prefix=title_prefix,
     )
 
-    out_path = Path(output_path or config.OUTPUT_DIR) / "character_map.html"
+    out_path = Path(output_path) / "character_map.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -208,7 +211,7 @@ def generate_character_map_html(memory_mgr: MemoryManager,
 # ============ 世界地图可视化 ============
 
 def generate_world_map_html(continuity: ContinuityGuard,
-                            output_path: str = None,
+                            output_path: str,
                             project_name: str = "") -> str:
     """
     生成世界地图 HTML（vis-network 拓扑图）
@@ -250,11 +253,7 @@ def generate_world_map_html(continuity: ContinuityGuard,
         edge["arrows"] = ""  # 无箭头（双向）
 
     # 内嵌 JS
-    vis_js = _load_vendor("vis-network.min.js")
-    if len(vis_js) > 1000:
-        js_tag = f"<script>\n{vis_js}\n</script>"
-    else:
-        js_tag = f'<script src="{vis_js}"></script>'
+    js_tag = _vendor_tag("vis-network.min.js")
 
     title_prefix = f"{project_name} - " if project_name else ""
     html = _WORLD_MAP_TEMPLATE.format(
@@ -264,7 +263,7 @@ def generate_world_map_html(continuity: ContinuityGuard,
         title_prefix=title_prefix,
     )
 
-    out_path = Path(output_path or config.OUTPUT_DIR) / "world_map.html"
+    out_path = Path(output_path) / "world_map.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -276,7 +275,7 @@ def generate_world_map_html(continuity: ContinuityGuard,
 
 def generate_all_visualizations(memory_mgr: MemoryManager,
                                 continuity: ContinuityGuard,
-                                output_path: str = None,
+                                output_path: str,
                                 project_name: str = "") -> Dict[str, str]:
     """一键生成所有三个可视化"""
     results = {}

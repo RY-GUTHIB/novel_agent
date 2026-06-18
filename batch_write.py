@@ -31,8 +31,12 @@ def main():
         print("      python batch_write.py 1 10 --resume  # 跳过已生成章节")
         sys.exit(1)
 
-    start_ch = int(args[0])
-    end_ch = int(args[1]) if len(args) >= 2 else start_ch
+    try:
+        start_ch = int(args[0])
+        end_ch = int(args[1]) if len(args) >= 2 else start_ch
+    except ValueError:
+        print("❌ 章节号必须是整数")
+        sys.exit(1)
 
     # 获取当前项目
     project_name = get_current_project_name()
@@ -44,11 +48,11 @@ def main():
         project_name = projects[0]["name"]
         set_current_project(project_name)
 
-    config.set_project(project_name)
+    ctx = config.set_project(project_name)
     check_api_key()
-    memory, continuity, foreshadow, rag = init_services()
+    memory, continuity, foreshadow, rag = init_services(ctx)
 
-    chapters_dir = Path(config.OUTPUT_DIR) / "chapters"
+    chapters_dir = ctx.output_dir / "chapters"
 
     # --resume：跳过已生成的章节
     if resume:

@@ -8,49 +8,44 @@ foreshadow.py - 伏笔/回调追踪
 4. 持久化到 data/foreshadow.json
 """
 
-import json
 import re
-import config
 from pathlib import Path
 from typing import List
 from dataclasses import asdict
 from .models import Foreshadow
-from .file_utils import atomic_write_json, atomic_write_text
+from .file_utils import atomic_write_text, JsonRepositoryMixin
 
 # 预编译正则
 _FS_PATTERN = re.compile(r'\[FS[：:]\s*(.*?)\s*\]')
 _FS_CLEAN = re.compile(r'^FS[：:]\s*')
 _FS_RESOLVE_PATTERN = re.compile(r'\[FS_RESOLVE[：:]\s*(FS_\d+)\s*\]')
-_FS_KEYWORD_PATTERN = re.compile(r'[一-龥]{3,10}')
+_FS_KEYWORD_PATTERN = re.compile(r'[\u4e00-\u9fff]{3,10}')
 
 
-class ForeshadowTracker:
+class ForeshadowTracker(JsonRepositoryMixin):
     """伏笔追踪器"""
 
-    def __init__(self, data_dir: str = None):
-        self.data_dir = Path(data_dir or config.DATA_DIR)
+    def __init__(self, data_dir: str):
+        self.data_dir = Path(data_dir)
         self.foreshadows: List[Foreshadow] = []
         self._counter = 0
         self._load()
 
     def _load(self):
-        path = self.data_dir / "foreshadow.json"
-        if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+        data = self._load_json("foreshadow.json", default=[])
+        if isinstance(data, list):
             self.foreshadows = [Foreshadow(**d) for d in data]
-            if self.foreshadows:
-                nums = []
-                for fs in self.foreshadows:
-                    parts = fs.id.split("_")
-                    if len(parts) >= 2 and parts[1].isdigit():
-                        nums.append(int(parts[1]))
-                if nums:
-                    self._counter = max(nums)
+        if self.foreshadows:
+            nums = []
+            for fs in self.foreshadows:
+                parts = fs.id.split("_")
+                if len(parts) >= 2 and parts[1].isdigit():
+                    nums.append(int(parts[1]))
+            if nums:
+                self._counter = max(nums)
 
-    def _save(self):
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(self.data_dir / "foreshadow.json", [asdict(fs) for fs in self.foreshadows])
+    def save(self):
+        self._save_json("foreshadow.json", [asdict(fs) for fs in self.foreshadows])
 
     def plant(self, chapter: int, content: str, type: str = "mystery",
               related_characters: List[str] = None, related_items: List[str] = None,
@@ -62,7 +57,7 @@ class ForeshadowTracker:
             related_characters=related_characters or [], related_items=related_items or [],
             planted_how=planted_how, importance=importance,
         ))
-        self._save()
+        self.save()
         return fs_id
 
     def add_manual_fs(self, chapter: int, fs_text: str, characters: List[str] = None) -> str:
@@ -80,7 +75,7 @@ class ForeshadowTracker:
                 fs.chapter_resolved = chapter
                 fs.resolution = resolution
                 fs.status = "resolved"
-                self._save()
+                self.save()
                 return
         raise ValueError(f"未找到伏笔 ID: {fs_id}")
 
@@ -89,7 +84,7 @@ class ForeshadowTracker:
             if fs.id == fs_id:
                 fs.status = "dropped"
                 fs.resolution = reason
-                self._save()
+                self.save()
                 return
 
     def auto_resolve(self, content: str, chapter: int) -> int:
@@ -115,7 +110,7 @@ class ForeshadowTracker:
                 pass
         
         if count:
-            self._save()
+            self.save()
         
         # 方式2：关键词候选提示（不自动回收，仅提示用户确认）
         pending = self.get_pending(before_chapter=chapter + 1)
@@ -210,8 +205,8 @@ class ForeshadowTracker:
             for fs in self.foreshadows
         ]
 
-    def export_to_markdown(self, output_dir: str = None) -> str:
-        out_dir = Path(output_dir or config.OUTPUT_DIR)
+    def export_to_markdown(self, output_dir: str) -> str:
+        out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
         planted = [fs for fs in self.foreshadows if fs.status == "planted"]

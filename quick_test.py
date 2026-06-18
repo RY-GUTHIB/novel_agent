@@ -22,6 +22,9 @@ from novel_agent.agents.writer import WriterAgent
 from novel_agent.agents.reviewer import ReviewerAgent
 from novel_agent.visualizer import generate_timeline_html, generate_character_map_html, generate_world_map_html
 
+DATA_DIR = str(PROJECT_ROOT / "data")
+OUTPUT_DIR = str(PROJECT_ROOT / "output")
+
 TEST_GENRE = "玄幻"
 TEST_STYLE = "热血"
 TEST_IDEA = "一个在天桥下摆摊算命的少年，偶然捡到一枚来自上古时期的铜钱，从此能看见万物的\"气数\"，却也因此被卷入一场跨越千年的布局。"
@@ -30,14 +33,14 @@ print("=" * 60)
 print("小说创作 Agent - 核心逻辑验证")
 print("=" * 60)
 
-print(f"\ndata_dir: {config.DATA_DIR}")
-print(f"output_dir: {config.OUTPUT_DIR}")
+print(f"\ndata_dir: {DATA_DIR}")
+print(f"output_dir: {OUTPUT_DIR}")
 
 # 初始化
 print("\n[初始化]...")
-memory = MemoryManager()
-continuity = ContinuityGuard()
-foreshadow = ForeshadowTracker()
+memory = MemoryManager(data_dir=DATA_DIR)
+continuity = ContinuityGuard(data_dir=DATA_DIR)
+foreshadow = ForeshadowTracker(data_dir=DATA_DIR)
 print("  [OK]")
 
 # Step 1: 生成大纲
@@ -74,15 +77,15 @@ print(f"  [OK] 评分: {report.get('overall_score', 0)} 通过: {report.get('pas
 print("\n[4/5] 保存数据...")
 memory.save_all()
 continuity.save_all()
-foreshadow._save()
-foreshadow.export_to_markdown()
+foreshadow.save()
+foreshadow.export_to_markdown(output_dir=OUTPUT_DIR)
 print("  [OK]")
 
 # Step 5: 可视化
 print("\n[5/5] 生成可视化...")
-generate_timeline_html(continuity)
-generate_character_map_html(memory)
-generate_world_map_html(continuity)
+generate_timeline_html(continuity, output_path=OUTPUT_DIR)
+generate_character_map_html(memory, output_path=OUTPUT_DIR)
+generate_world_map_html(continuity, output_path=OUTPUT_DIR)
 print("  [OK]")
 
 print("\n" + "=" * 60)
