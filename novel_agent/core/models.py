@@ -48,6 +48,9 @@ class CharacterProfile:
     first_appeared: int = 1
     arc: str = ""
     notes: str = ""
+    learned_skills: List[dict] = field(default_factory=list)  # 技能记录: [{skill, source, level, cost, note}]
+    faction: str = ""  # 所属势力
+    faction_status: str = ""  # 势力身份（如"白银骑士""流放者"）
 
 
 @dataclass

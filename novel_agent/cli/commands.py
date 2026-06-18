@@ -167,9 +167,10 @@ def init_services(ctx: config.ProjectContext = None):
     return MemoryManager(), ContinuityGuard(), ForeshadowTracker(), RAGStore()
 
 
-def generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept):
+def generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept, ctx=None):
     print("\n🤖 正在调用 LLM 生成大纲，请稍候（约1-2分钟）...")
-    planner = PlannerAgent(memory, continuity, foreshadow)
+    ctx = ctx or config.get_project_context()
+    planner = PlannerAgent(memory, continuity, foreshadow, ctx=ctx)
     try:
         outline = planner.generate_outline(concept, genre=genre, style=style)
         planner.save_outline_json(outline)

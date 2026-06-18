@@ -682,10 +682,31 @@ class WriterAgent:
                             char.relationships_detail[other] = ctx
                 for field_name in ["cultivation", "current_location", "appearance", "personality", "status",
                                     "goals", "notes", "core_values", "core_desire", "core_fear",
-                                    "flaw", "alignment", "background", "speaking_style"]:
+                                    "flaw", "alignment", "background", "speaking_style", "faction", "faction_status"]:
                     val = updates.get(field_name, "")
                     if val:
                         setattr(char, field_name, val)
+                # 处理技能更新
+                for skill_data in updates.get("learned_skills", []):
+                    if isinstance(skill_data, dict):
+                        skill_name = skill_data.get("skill", "")
+                        if skill_name:
+                            # 检查是否已存在该技能
+                            existing = next((s for s in char.learned_skills if s.get("skill") == skill_name), None)
+                            if existing:
+                                # 更新现有技能（等级提升）
+                                existing["level"] = skill_data.get("level", existing.get("level", "初学"))
+                                existing["cost"] = skill_data.get("cost", existing.get("cost", ""))
+                                existing["note"] = skill_data.get("note", existing.get("note", ""))
+                            else:
+                                # 添加新技能
+                                char.learned_skills.append({
+                                    "skill": skill_name,
+                                    "source": skill_data.get("source", "未知"),
+                                    "level": skill_data.get("level", "初学"),
+                                    "cost": skill_data.get("cost", ""),
+                                    "note": skill_data.get("note", ""),
+                                })
                 updated_count += 1
 
         if new_count or updated_count:

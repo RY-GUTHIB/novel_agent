@@ -27,10 +27,12 @@ class PlannerAgent:
 
     def __init__(self, memory_mgr: MemoryManager,
                   continuity_guard: ContinuityGuard,
-                  foreshadow_tracker: ForeshadowTracker):
+                  foreshadow_tracker: ForeshadowTracker,
+                  ctx=None):
         self.memory = memory_mgr
         self.continuity = continuity_guard
         self.foreshadow = foreshadow_tracker
+        self.ctx = ctx or config.get_project_context()
 
     def generate_outline(self, user_idea: str, genre: str = "玄幻", style: str = "热血") -> Dict:
         user_prompt = f"""请为以下创意生成完整长篇小说大纲：
@@ -184,7 +186,7 @@ class PlannerAgent:
                 speaking_style=c_data.get("speaking_style", ""),
                 abilities=c_data.get("abilities", []),
                 relationships=c_data.get("relationships", {}),
-                core_values=c_data.get("core_value", ""),
+                core_values=c_data.get("core_values", c_data.get("core_value", "")),
                 core_desire=c_data.get("core_desire", ""),
                 core_fear=c_data.get("core_fear", ""),
                 flaw=c_data.get("core_flaw", ""),
@@ -203,6 +205,8 @@ class PlannerAgent:
             self.memory.add_location(profile)
 
     def _init_factions(self, outline: Dict):
+        """加载势力设定到 world_settings，支持大纲格式和 factions.json 格式"""
+        # 1. 处理大纲中的 factions 数组（旧格式）
         for fac_data in outline.get("factions", []):
             fac_info = f"{fac_data['name']}（{fac_data.get('level', '')}）：首领 {fac_data.get('leader', '')}"
             if fac_data.get("allies"):
@@ -212,6 +216,23 @@ class PlannerAgent:
             if fac_data.get("alliance_chain"):
                 fac_info += f"；庇护链：{' → '.join(fac_data['alliance_chain'])}"
             self.memory.add_world_setting(WorldSetting(key=f"势力-{fac_data['name']}", value=fac_info))
+
+        # 2. 处理 factions.json 格式（新格式，如果存在）
+        factions_path = self.ctx.data_dir / "factions.json" if hasattr(self, 'ctx') else Path(config.DATA_DIR) / "factions.json"
+        if factions_path.exists():
+            try:
+                with open(factions_path, "r", encoding="utf-8") as f:
+                    factions_data = json.load(f)
+                for key, fac_data in factions_data.items():
+                    if isinstance(fac_data, dict) and "value" in fac_data:
+                        # factions.json 格式: {key, value, chapter_introduced}
+                        self.memory.add_world_setting(WorldSetting(
+                            key=f"势力-{key}",
+                            value=fac_data["value"],
+                            chapter_introduced=fac_data.get("chapter_introduced", 1)
+                        ))
+            except Exception as e:
+                logger.warning(f"加载 factions.json 失败: {e}")
 
     def _init_key_items(self, outline: Dict):
         """写入大纲物品，校验 giver 唯一性"""
@@ -549,6 +570,7 @@ class PlannerAgent:
 
     def save_outline_json(self, outline: Dict, filepath: str = None):
         from pathlib import Path
+import config
         if filepath is None:
             filepath = self.memory.data_dir / "outline.json"
         else:

@@ -5,6 +5,7 @@ tiktoken>=0.7.0        # token 计数
 
 # 向量数据库（RAG，可选）
 chromadb>=0.5.0
+rank_bm25>=0.2.0       # BM25 混合检索
 
 # 其他 LLM 后端（按需安装）
 # google-generativeai>=0.8.0  # Gemini
