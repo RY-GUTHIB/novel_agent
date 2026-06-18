@@ -16,6 +16,9 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# 预编译正则
+_JSON_BLOCK_PATTERN = re.compile(r'```(?:json)?\s*([\s\S]*?)\s*```')
+
 # 重试配置
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2  # 秒，指数退避基数
@@ -31,7 +34,7 @@ try:
     from openai import APITimeoutError, APIConnectionError, RateLimitError, InternalServerError
     _RETRYABLE_EXCEPTIONS += (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
 except ImportError:
-    OpenAIAPIError = Exception
+    OpenAIAPIError = type('_DummyAPIError', (), {})  # 永远不匹配 isinstance
 
 try:
     from anthropic import APIError as AnthropicAPIError
@@ -308,7 +311,7 @@ def parse_json(text: str) -> dict:
     except json.JSONDecodeError:
         pass
     # 第2层：提取 markdown 代码块
-    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+    match = _JSON_BLOCK_PATTERN.search(text)
     if match:
         try:
             return json.loads(match.group(1))
@@ -409,7 +412,7 @@ def parse_json_array(text: str) -> list:
         return result if isinstance(result, list) else []
     except json.JSONDecodeError:
         pass
-    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+    match = _JSON_BLOCK_PATTERN.search(text)
     if match:
         try:
             result = json.loads(match.group(1))

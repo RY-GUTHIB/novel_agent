@@ -4,13 +4,14 @@ file_utils.py - 文件操作工具（原子写入）
 import json
 import os
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 
-def atomic_write_json(path: Path, data: Any, indent: int = 2):
+def atomic_write_json(path: PurePath, data: Any, indent: int = 2):
     """原子写入 JSON 文件：先写临时文件，再 os.replace 原子替换。
     防止写入中途崩溃导致文件截断/损坏。"""
+    path = Path(path)
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -29,8 +30,9 @@ def atomic_write_json(path: Path, data: Any, indent: int = 2):
         raise
 
 
-def atomic_write_text(path: Path, text: str):
+def atomic_write_text(path: PurePath, text: str):
     """原子写入文本文件。"""
+    path = Path(path)
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(

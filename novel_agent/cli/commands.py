@@ -256,8 +256,9 @@ def cmd_new(memory, continuity, foreshadow, rag, project_name):
     generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept)
 
 
-def cmd_write(memory, continuity, foreshadow, rag, project_name, chapter=None):
-    outline_path = Path(config.DATA_DIR) / "outline.json"
+def cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=None, chapter=None):
+    ctx = ctx or config.get_project_context()
+    outline_path = ctx.data_dir / "outline.json"
     if not outline_path.exists():
         print("❌ 未找到大纲文件，请先运行：python main.py new")
         return
@@ -271,7 +272,7 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, chapter=None):
         return
 
     if chapter is None:
-        existing = glob.glob(str(Path(config.OUTPUT_DIR) / "chapters" / "chapter_*.md"))
+        existing = glob.glob(str(ctx.chapters_dir / "chapter_*.md"))
         chapter = len(existing) + 1
 
     ch_data = next((c for c in chapter_plan if c["chapter"] == chapter), None)
@@ -296,7 +297,8 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, chapter=None):
     meta = outline.get("meta", {})
     writer = WriterAgent(memory, continuity, foreshadow, rag_store=rag,
                          genre=meta.get("genre", outline.get("genre", "玄幻")),
-                         style=meta.get("style", outline.get("style", "热血")))
+                         style=meta.get("style", outline.get("style", "热血")),
+                         ctx=ctx)
     reviewer = ReviewerAgent(memory, continuity, foreshadow)
 
     # ===== 生成前预检 =====
@@ -347,12 +349,12 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, chapter=None):
         writer.save_chapter(chapter, title, content)
 
         update_project_progress(project_name, chapters_written=chapter)
-        rebuild_novel_md(config.OUTPUT_DIR)
-        update_project_memory(project_name, memory, continuity, foreshadow)
+        rebuild_novel_md(ctx.output_dir)
+        update_project_memory(project_name, memory, continuity, foreshadow, output_dir=ctx.output_dir)
 
         print(f"\n✅ 第 {chapter} 章完成！")
         print(f"  字数：约 {len(content)} 字")
-        print(f"  保存至：{config.OUTPUT_DIR}/chapters/chapter_{chapter:03d}.md")
+        print(f"  保存至：{ctx.chapters_dir}/chapter_{chapter:03d}.md")
 
         # 伏笔报告
         pending = foreshadow.get_pending()
@@ -455,8 +457,9 @@ def _review_loop(writer, reviewer, chapter, title, content, summary, time_tag, l
     return content, settings_json
 
 
-def cmd_review(memory, continuity, foreshadow, rag, project_name):
-    existing = sorted(glob.glob(str(Path(config.OUTPUT_DIR) / "chapters" / "chapter_*.md")))
+def cmd_review(memory, continuity, foreshadow, rag, project_name, ctx=None):
+    ctx = ctx or config.get_project_context()
+    existing = sorted(glob.glob(str(ctx.chapters_dir / "chapter_*.md")))
     if not existing:
         print("❌ 没有已生成的章节")
         return
@@ -466,7 +469,7 @@ def cmd_review(memory, continuity, foreshadow, rag, project_name):
     with open(last_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    outline_path = Path(config.DATA_DIR) / "outline.json"
+    outline_path = ctx.data_dir / "outline.json"
     title = f"第{chapter_num}章"
     if outline_path.exists():
         with open(outline_path, "r", encoding="utf-8") as f:
@@ -484,35 +487,37 @@ def cmd_review(memory, continuity, foreshadow, rag, project_name):
                                           characters=ch_data.get("characters", []) if ch_data else [])
         print(report["raw_text"])
         reviewer.save_review_report(chapter_num, report)
-        print(f"\n📁 审校报告：{config.OUTPUT_DIR}/review_chapter_{chapter_num:03d}.md")
+        print(f"\n📁 审校报告：{ctx.chapters_dir.parent}/review_chapter_{chapter_num:03d}.md")
         print(f"结论：{report['verdict']}")
     except Exception as e:
         print(f"❌ 审校失败：{e}")
 
 
-def cmd_viz(memory, continuity, foreshadow, rag, project_name):
+def cmd_viz(memory, continuity, foreshadow, rag, project_name, ctx=None):
+    ctx = ctx or config.get_project_context()
     print("\n=== 生成可视化 ===")
     try:
         results = generate_all_visualizations(memory, continuity, project_name=project_name)
         print("✅ 可视化生成完成！")
         for name, path in results.items():
             print(f"  {name}：{path}")
-        fs_path = foreshadow.export_to_markdown()
+        fs_path = foreshadow.export_to_markdown(output_dir=ctx.output_dir)
         print(f"  伏笔总览：{fs_path}")
         print("\n💡 用浏览器打开 HTML 文件即可查看")
     except Exception as e:
         print(f"❌ 可视化生成失败：{e}")
 
 
-def cmd_status(memory, continuity, foreshadow, rag, project_name):
+def cmd_status(memory, continuity, foreshadow, rag, project_name, ctx=None):
+    ctx = ctx or config.get_project_context()
     cfg = load_project_config(project_name)
-    novel_title = _get_novel_title()
+    novel_title = _get_novel_title(data_dir=ctx.data_dir)
     print(f"\n=== 《{novel_title or project_name}》创作进度 ===")
     print(f"项目名：{project_name} | 类型：{cfg.get('type', '未知')} | 风格：{cfg.get('style', '未知')}")
     if cfg.get("concept"):
         print(f"构思：{cfg['concept'][:80]}...")
 
-    outline_path = Path(config.DATA_DIR) / "outline.json"
+    outline_path = ctx.data_dir / "outline.json"
     if outline_path.exists():
         with open(outline_path, "r", encoding="utf-8") as f:
             outline = json.load(f)
@@ -522,7 +527,7 @@ def cmd_status(memory, continuity, foreshadow, rag, project_name):
     else:
         print("\n⚠️  未找到大纲（请先运行 python main.py new）")
 
-    existing = sorted(glob.glob(str(Path(config.OUTPUT_DIR) / "chapters" / "chapter_*.md")))
+    existing = sorted(glob.glob(str(ctx.chapters_dir / "chapter_*.md")))
     print(f"\n已生成章节：{len(existing)} 章")
     for path in existing[-5:]:
         print(f"  - {Path(path).name}")
@@ -658,13 +663,13 @@ def interactive_loop(project_name):
             print("👋 再见！")
             break
         elif cmd == "write":
-            cmd_write(memory, continuity, foreshadow, rag, project_name)
+            cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
         elif cmd == "review":
-            cmd_review(memory, continuity, foreshadow, rag, project_name)
+            cmd_review(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
         elif cmd == "viz":
-            cmd_viz(memory, continuity, foreshadow, rag, project_name)
+            cmd_viz(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
         elif cmd == "status":
-            cmd_status(memory, continuity, foreshadow, rag, project_name)
+            cmd_status(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
         elif cmd == "new":
             cmd_new(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "add-fs":
@@ -677,8 +682,8 @@ def interactive_loop(project_name):
             new_name = select_project()
             if new_name != project_name:
                 project_name = new_name
-                config.set_project(project_name)
-                memory, continuity, foreshadow, rag = init_services()
+                ctx = config.set_project(project_name)
+                memory, continuity, foreshadow, rag = init_services(ctx)
         elif cmd == "list":
             cmd_list()
         elif cmd == "help":
@@ -721,7 +726,8 @@ def rebuild_novel_md(output_dir: str = None):
 
 def update_project_memory(project_name: str, memory: MemoryManager,
                           continuity: ContinuityGuard,
-                          foreshadow: ForeshadowTracker):
+                          foreshadow: ForeshadowTracker,
+                          output_dir: str = None):
     """自动更新 projects/<项目名>/MEMORY.md 的数据统计部分"""
     from datetime import datetime
 
@@ -735,7 +741,7 @@ def update_project_memory(project_name: str, memory: MemoryManager,
     content = mem_path.read_text(encoding="utf-8")
 
     # 更新小说标题
-    novel_title = _get_novel_title()
+    novel_title = _get_novel_title(data_dir=out_dir.parent / "data")
     if novel_title:
         content = re.sub(
             r"^# MEMORY\.md - 《.+》",
@@ -757,7 +763,8 @@ def update_project_memory(project_name: str, memory: MemoryManager,
     )
 
     # 更新数据统计
-    chapters_dir = Path(config.OUTPUT_DIR) / "chapters"
+    out_dir = Path(output_dir or config.OUTPUT_DIR)
+    chapters_dir = out_dir / "chapters"
     written = len(glob.glob(str(chapters_dir / "chapter_*.md"))) if chapters_dir.exists() else 0
     resolved = len([fs for fs in foreshadow.foreshadows if fs.status == "resolved"])
 
@@ -778,7 +785,7 @@ def update_project_memory(project_name: str, memory: MemoryManager,
     mem_path.write_text(content, encoding="utf-8")
 
 
-def _create_project_memory(project_name: str):
+def _create_project_memory(project_name: str, data_dir: str = None):
     """为项目创建初始 MEMORY.md 模板"""
     from datetime import datetime
 
@@ -786,7 +793,7 @@ def _create_project_memory(project_name: str):
     if mem_path.exists():
         return
 
-    novel_title = _get_novel_title()
+    novel_title = _get_novel_title(data_dir=data_dir)
     cfg = load_project_config(project_name)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -842,9 +849,9 @@ def _create_project_memory(project_name: str):
     print(f"  📄 已创建项目记忆文件：{mem_path}")
 
 
-def _get_novel_title() -> str:
+def _get_novel_title(data_dir: str = None) -> str:
     """从 outline.json 读取小说标题"""
-    outline_path = Path(config.DATA_DIR) / "outline.json"
+    outline_path = Path(data_dir or config.DATA_DIR) / "outline.json"
     if outline_path.exists():
         with open(outline_path, "r", encoding="utf-8") as f:
             outline = json.load(f)

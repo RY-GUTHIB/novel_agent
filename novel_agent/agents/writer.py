@@ -45,7 +45,8 @@ class WriterAgent:
 
     def __init__(self, memory_mgr: MemoryManager, continuity_guard: ContinuityGuard,
                   foreshadow_tracker: ForeshadowTracker, rag_store: RAGStore = None,
-                  genre: str = "玄幻", style: str = "热血"):
+                  genre: str = "玄幻", style: str = "热血",
+                  ctx: config.ProjectContext = None):
         self.memory = memory_mgr
         self.continuity = continuity_guard
         self.foreshadow = foreshadow_tracker
@@ -53,6 +54,7 @@ class WriterAgent:
         self.genre = genre
         self.style = style
         self.validator = ContractValidator()
+        self.ctx = ctx or config.get_project_context()
 
     # ========== 核心生成 ==========
 
@@ -261,7 +263,7 @@ class WriterAgent:
         if chapter <= 1:
             return "（这是第一章，无上一章）"
         prev_chapter = chapter - 1
-        out_dir = Path(config.OUTPUT_DIR) / "chapters"
+        out_dir = self.ctx.chapters_dir
         prev_path = out_dir / f"chapter_{prev_chapter:03d}.md"
         if prev_path.exists():
             with open(prev_path, "r", encoding="utf-8") as f:
@@ -275,7 +277,7 @@ class WriterAgent:
         """读取前 N 章内容，用于写作参考（过渡自然 + 防上下文冲突）"""
         if chapter <= 1:
             return "（这是第一章，无前章内容）"
-        out_dir = Path(config.OUTPUT_DIR) / "chapters"
+        out_dir = self.ctx.chapters_dir
         parts = []
         for i in range(1, max_chapters + 1):
             prev = chapter - i
@@ -575,11 +577,10 @@ class WriterAgent:
             print(f"  [合并解析] 未找到分隔符，正文 {len(raw_output)} 字")
             return raw_output, None
 
-    @staticmethod
-    def _save_failed_settings(settings_text: str):
+    def _save_failed_settings(self, settings_text: str):
         """保存解析失败的 SETTINGS_JSON 原始文本，方便排查问题"""
         from datetime import datetime
-        debug_path = Path(config.OUTPUT_DIR) / "debug_settings.txt"
+        debug_path = self.ctx.output_dir / "debug_settings.txt"
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         content = (
             f"# 解析失败时间: {timestamp}\n"
@@ -589,7 +590,7 @@ class WriterAgent:
         )
         atomic_write_text(debug_path, content)
         # 同时追加到日志
-        debug_log = Path(config.OUTPUT_DIR) / "debug_settings.log"
+        debug_log = self.ctx.output_dir / "debug_settings.log"
         with open(debug_log, "a", encoding="utf-8") as f:
             f.write(f"\n{'='*60}\n")
             f.write(f"[{timestamp}] 解析失败，长度={len(settings_text)}\n")
@@ -1018,14 +1019,14 @@ class WriterAgent:
         self.memory.update_style(style_updates)
 
     def save_chapter(self, chapter: int, title: str, content: str, output_dir: str = None):
-        out_dir = Path(output_dir or config.OUTPUT_DIR)
+        out_dir = Path(output_dir or self.ctx.output_dir)
         chapters_dir = out_dir / "chapters"
         chapters_dir.mkdir(parents=True, exist_ok=True)
         chapter_path = chapters_dir / f"chapter_{chapter:03d}.md"
         atomic_write_text(chapter_path, f"# 第{chapter}章 {title}\n\n{content}")
 
     def load_chapter(self, chapter: int, output_dir: str = None) -> str:
-        out_dir = Path(output_dir or config.OUTPUT_DIR)
+        out_dir = Path(output_dir or self.ctx.output_dir)
         chapter_path = out_dir / "chapters" / f"chapter_{chapter:03d}.md"
         if chapter_path.exists():
             with open(chapter_path, "r", encoding="utf-8") as f:
