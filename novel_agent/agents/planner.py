@@ -206,18 +206,7 @@ class PlannerAgent:
 
     def _init_factions(self, outline: Dict):
         """加载势力设定到 world_settings，支持大纲格式和 factions.json 格式"""
-        # 1. 处理大纲中的 factions 数组（旧格式）
-        for fac_data in outline.get("factions", []):
-            fac_info = f"{fac_data['name']}（{fac_data.get('level', '')}）：首领 {fac_data.get('leader', '')}"
-            if fac_data.get("allies"):
-                fac_info += f"；盟友：{', '.join(fac_data['allies'])}"
-            if fac_data.get("enemies"):
-                fac_info += f"；敌对：{', '.join(fac_data['enemies'])}"
-            if fac_data.get("alliance_chain"):
-                fac_info += f"；庇护链：{' → '.join(fac_data['alliance_chain'])}"
-            self.memory.add_world_setting(WorldSetting(key=f"势力-{fac_data['name']}", value=fac_info))
-
-        # 2. 处理 factions.json 格式（新格式，如果存在）
+        # 优先处理 factions.json 格式（新格式，更详细）
         factions_path = self.ctx.data_dir / "factions.json" if hasattr(self, 'ctx') else Path(config.DATA_DIR) / "factions.json"
         if factions_path.exists():
             try:
@@ -233,6 +222,18 @@ class PlannerAgent:
                         ))
             except Exception as e:
                 logger.warning(f"加载 factions.json 失败: {e}")
+            return  # 如果 factions.json 存在，不再处理大纲中的 factions 数组，避免重复
+
+        # 处理大纲中的 factions 数组（旧格式，兼容）
+        for fac_data in outline.get("factions", []):
+            fac_info = f"{fac_data['name']}（{fac_data.get('level', '')}）：首领 {fac_data.get('leader', '')}"
+            if fac_data.get("allies"):
+                fac_info += f"；盟友：{', '.join(fac_data['allies'])}"
+            if fac_data.get("enemies"):
+                fac_info += f"；敌对：{', '.join(fac_data['enemies'])}"
+            if fac_data.get("alliance_chain"):
+                fac_info += f"；庇护链：{' → '.join(fac_data['alliance_chain'])}"
+            self.memory.add_world_setting(WorldSetting(key=f"势力-{fac_data['name']}", value=fac_info))
 
     def _init_key_items(self, outline: Dict):
         """写入大纲物品，校验 giver 唯一性"""
@@ -570,7 +571,6 @@ class PlannerAgent:
 
     def save_outline_json(self, outline: Dict, filepath: str = None):
         from pathlib import Path
-import config
         if filepath is None:
             filepath = self.memory.data_dir / "outline.json"
         else:

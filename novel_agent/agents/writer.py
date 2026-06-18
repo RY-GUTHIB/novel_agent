@@ -707,6 +707,8 @@ class WriterAgent:
                                     "cost": skill_data.get("cost", ""),
                                     "note": skill_data.get("note", ""),
                                 })
+                # 技能更新后立即保存，确保原子性
+                self.memory._save_characters()
                 updated_count += 1
 
         if new_count or updated_count:
