@@ -256,16 +256,35 @@ class ContinuityGuard(JsonRepositoryMixin):
         if character_knowledge_text and character_knowledge_text != "（无角色认知记录）":
             lines.append(f"\n{character_knowledge_text}")
 
-        lines.append("\n## 地点拓扑（移动路径参考）：")
+        lines.append("\n## 地点拓扑（移动路径参考 + 相对方位）：")
         for name, node in self.spacemap.items():
-            conns = node.connected_to
-            travel = node.travel_time
-            if conns:
-                conn_details = [f"{t}（{travel.get(t, '')}）" if travel.get(t) else t for t in conns]
-                lines.append(f"  {name} → 可达：{', '.join(conn_details)}")
-            else:
-                lines.append(f"  {name}（无已知通道）")
+            lines.append(self._format_spacemap_line(name, node))
+        return "\n".join(lines)
 
+    def _format_spacemap_line(self, name: str, node) -> str:
+        conns = node.connected_to
+        travel = node.travel_time
+        rel_pos = node.relative_position
+        desc = f" - {node.description[:40]}" if node.description else ""
+        if not conns:
+            return f"  {name}{desc}（无已知通道）"
+        parts = []
+        for t in conns:
+            detail = ""
+            if travel.get(t):
+                detail += f" {travel[t]}"
+            if rel_pos.get(t):
+                detail += f"（{rel_pos[t]}）"
+            parts.append(f"{t}{detail}" if detail else t)
+        return f"  {name}{desc} → 可达：{'，'.join(parts)}"
+
+    def get_spacemap_prompt(self) -> str:
+        """纯空间地图 prompt（单独段，不埋在连续性摘要里）"""
+        if not self.spacemap:
+            return "（无空间地图数据）"
+        lines = ["【空间地图（地点连通关系 + 行程时间 + 相对方位）】"]
+        for name, node in self.spacemap.items():
+            lines.append(self._format_spacemap_line(name, node))
         return "\n".join(lines)
 
     # ========== 导出（给可视化用）==========
@@ -286,5 +305,9 @@ class ContinuityGuard(JsonRepositoryMixin):
         edges = []
         for name, node in self.spacemap.items():
             for target in node.connected_to:
-                edges.append({"from": name, "to": target, "travel_time": node.travel_time.get(target, "")})
+                edge = {"from": name, "to": target, "travel_time": node.travel_time.get(target, "")}
+                direction = node.relative_position.get(target, "")
+                if direction:
+                    edge["direction"] = direction
+                edges.append(edge)
         return {"nodes": nodes, "edges": edges}

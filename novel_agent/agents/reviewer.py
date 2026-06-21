@@ -13,11 +13,12 @@ import json
 import logging
 from typing import Dict
 
+import config
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
 from novel_agent.llm.client import generate
-from .prompts import REVIEWER_SYSTEM_PROMPT, REVIEWER_USER_PROMPT
+from .prompts import REVIEWER_SYSTEM_PROMPT, REVIEWER_USER_PROMPT, ANTI_AI_WRITING_RULES
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,17 @@ class ReviewerAgent:
         self.memory = memory_mgr
         self.continuity = continuity_guard
         self.foreshadow = foreshadow_tracker
+
+    def _build_anti_ai_rules(self) -> str:
+        if not config.ENABLE_ANTI_AI_MODE:
+            return "（未启用）"
+        cfg = config.ANTI_AI_CONFIG
+        lines = [
+            ANTI_AI_WRITING_RULES,
+            f"\n> 当前密度红线：每 {cfg['check_window']} 字 ≤ {cfg['density_limit']} 次",
+            f"> 高光场景慎用词：{'、'.join(cfg['high_stakes_words'])}",
+        ]
+        return "\n".join(lines)
 
     def review_chapter(self, chapter: int, title: str, content: str,
                         temperature: float = 0.3,
@@ -53,6 +65,7 @@ class ReviewerAgent:
         timeline_events = self.continuity.timeline if self.continuity else None
         state_snapshot = self.memory.build_state_snapshot(chapter, characters or [], timeline_events)
 
+        anti_ai_rules = self._build_anti_ai_rules()
         user_prompt = REVIEWER_USER_PROMPT.format(
             chapter=chapter, title=title, content=content,
             continuity_prompt=self.continuity.generate_continuity_prompt(
@@ -62,11 +75,14 @@ class ReviewerAgent:
             ),
             character_prompts=self.memory.get_all_characters_prompt() or "（无）",
             sect_factions=self.memory.get_sect_factions_prompt(),
+            scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
+            spacemap_prompt=self.continuity.get_spacemap_prompt(),
             spatial_context="\n".join(spatial_lines) if spatial_lines else "（无记录）",
             foreshadow_summary=self.foreshadow.summarize(),
             style_prompt=self.memory.get_style_prompt(),
             logic_constraints=logic_constraints or "（无特殊逻辑约束）",
             state_snapshot=state_snapshot,
+            anti_ai_rules=anti_ai_rules,
         )
 
         response = generate(
@@ -97,6 +113,7 @@ class ReviewerAgent:
                     "time": "时间一致性",
                     "style_consistency": "风格一致性",
                     "fact_check": "事实一致性",
+                    "ai_density": "AI疲劳词汇密度",
                 }
                 for key, cn_name in field_map.items():
                     if key in parsed:

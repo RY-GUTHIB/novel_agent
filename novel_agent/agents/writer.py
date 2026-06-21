@@ -29,6 +29,8 @@ from novel_agent.core.file_utils import atomic_write_json, atomic_write_text
 from .prompts import (
     CHAPTER_WRITER_SYSTEM_PROMPT, CHAPTER_WRITER_USER_PROMPT,
     CHAPTER_REVISER_SYSTEM_PROMPT, CHAPTER_REVISER_USER_PROMPT,
+    ANTI_AI_WRITING_RULES,
+    ANTI_AI_REWRITE_SYSTEM_PROMPT, ANTI_AI_REWRITE_USER_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,9 +81,11 @@ class WriterAgent:
         generation_contract = self.memory.get_generation_contract(chapter, characters)
 
         # 2. 构建 prompt
+        anti_ai_rules = self._build_anti_ai_rules()
         system_prompt = CHAPTER_WRITER_SYSTEM_PROMPT.format(
             genre=self.genre, style=self.style, word_target=config.CHAPTER_WORD_TARGET,
             settings_json_example=generate_settings_json_example(),
+            anti_ai_rules=anti_ai_rules,
         )
         user_prompt = self._build_writer_user_prompt(
             chapter, title, summary, time_tag, location, characters, generation_contract,
@@ -133,7 +137,11 @@ class WriterAgent:
         if temperature is None:
             temperature = config.TEMPERATURE
         generation_contract = self.memory.get_generation_contract(chapter, characters)
-        system_prompt = CHAPTER_REVISER_SYSTEM_PROMPT.format(word_target=config.CHAPTER_WORD_TARGET)
+        anti_ai_rules = self._build_anti_ai_rules()
+        system_prompt = CHAPTER_REVISER_SYSTEM_PROMPT.format(
+            word_target=config.CHAPTER_WORD_TARGET,
+            anti_ai_rules=anti_ai_rules,
+        )
         user_prompt = self._build_reviser_user_prompt(
             chapter, title, review_report, original_content, summary,
             time_tag, location, characters, generation_contract,
@@ -243,7 +251,7 @@ class WriterAgent:
         existing_loc_text = ", ".join(sorted(self.memory.locations.keys())) if self.memory.locations else "（无）"
         existing_sect_text = ", ".join(sorted(self.memory.sect_factions.keys())) if self.memory.sect_factions else "（无）"
         existing_items_text = ", ".join(sorted(self.memory.items.keys())) if self.memory.items else "（无）"
-        existing_tasks_text = self._build_existing_tasks_text()
+        existing_tasks_text = self._build_existing_tasks_text(chapter)
 
         # 上一章结尾钩子
         prev_chapter_ending = self._get_prev_chapter_ending(chapter)
@@ -272,6 +280,7 @@ class WriterAgent:
             world_settings=self.memory.get_world_settings_prompt(),
             sect_factions=self.memory.get_sect_factions_prompt(),
             scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
+            spacemap_prompt=self.continuity.get_spacemap_prompt(),
             outline_context=self.memory.get_outline_context_prompt(chapter),
             foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
             rag_context=rag_context,
@@ -288,8 +297,16 @@ class WriterAgent:
             hook_type=self._get_hook_type_for_chapter(chapter),
         )
 
-    def _build_existing_tasks_text(self) -> str:
-        tasks = self.memory.get_active_tasks()
+    def _build_anti_ai_rules(self) -> str:
+        if not config.ENABLE_ANTI_AI_MODE:
+            return ""
+        cfg = config.ANTI_AI_CONFIG
+        lines = [ANTI_AI_WRITING_RULES]
+        lines.append(f"\n> 当前密度红线：每 {cfg['check_window']} 字 ≤ {cfg['density_limit']} 次｜高光场景慎用词：{'、'.join(cfg['high_stakes_words'])}")
+        return "\n".join(lines)
+
+    def _build_existing_tasks_text(self, chapter: int) -> str:
+        tasks = self.memory.get_active_tasks(current_chapter=chapter)
         if not tasks:
             return "（无）"
         lines = []
@@ -301,6 +318,56 @@ class WriterAgent:
             if t.related_items:
                 lines.append(f"  - 涉及物品：{', '.join(t.related_items)}")
         return "\n".join(lines)
+
+    def _auto_check_tasks(self, content: str, chapter: int):
+        """关键词检测：活跃任务是否可能在本章被自然完成（仅告警，不自动标记）"""
+        active = self.memory.get_active_tasks(current_chapter=chapter, limit=20)
+        kw_pattern = re.compile(r'[\u4e00-\u9fff]{3,10}')
+        for task in active:
+            text = f"{task.name} {task.description}"
+            keywords = kw_pattern.findall(text)
+            keywords = [k for k in keywords if len(k) >= 3]
+            keywords = list(set(keywords))
+            if not keywords:
+                continue
+            match_count = sum(1 for kw in keywords if kw in content)
+            threshold = max(len(keywords) * 2 // 3, 2)
+            if match_count >= threshold:
+                logger.info(
+                    "任务 [%s] %s 可能在本章完成（关键词命中 %d/%d），"
+                    "请确认 SETTINGS_JSON 的 task status 是否正确标记为 completed",
+                    task.id, task.name, match_count, len(keywords),
+                )
+
+    def de_ai_rewrite(self, chapter: int, content: str) -> str:
+        """反高潮二创：对已生成的章节做去AI味改写。
+        
+        注意：此函数仅为 CLI `de-ai` 命令提供，不接入自动写章/审校管线。
+        如需在 future 自动调用，需确认改写后的内容不会破坏 SETTINGS_JSON 回写一致性。
+        """
+        from novel_agent.llm.client import generate
+        system_prompt = ANTI_AI_REWRITE_SYSTEM_PROMPT
+        user_prompt = ANTI_AI_REWRITE_USER_PROMPT.format(content=content)
+        raw = generate(
+            system_prompt=system_prompt, user_prompt=user_prompt,
+            temperature=0.6, max_tokens=config.MAX_TOKENS,
+        )
+        if not raw:
+            print("  [WARN] 去AI改写失败，保留原章节")
+            return content
+        # 保存改写前后的对比
+        out_dir = self.ctx.output_dir
+        import datetime
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = out_dir / f"chapter_{chapter:03d}_pre_deai_{ts}.md"
+        with open(backup_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        # 保存改写后的版本
+        chapter_path = out_dir / "chapters" / f"chapter_{chapter:03d}.md"
+        with open(chapter_path, "w", encoding="utf-8") as f:
+            f.write(raw)
+        print(f"  [OK] 去AI改写完成，原版备份: {backup_path.name}")
+        return raw
 
     def _get_prev_chapter_ending(self, chapter: int) -> str:
         """读取上一章最后 200 字，用于钩子衔接"""
@@ -596,7 +663,10 @@ class WriterAgent:
             chapter, len(explicit_fs), len(implicit_fs), fs_planted, resolved_count, task_count,
         )
 
-        # 4. RAG 存储（审校通过后才写入向量库，防止失败章节污染检索）
+        # 4. 任务自动完成检测（关键词级，仅告警不自动标记）
+        self._auto_check_tasks(content, chapter)
+
+        # 5. RAG 存储（审校通过后才写入向量库，防止失败章节污染检索）
         if self.rag:
             try:
                 self.rag.add_chapter(chapter, title, content)
@@ -650,6 +720,12 @@ class WriterAgent:
                 )
                 if patched:
                     content = patched
+                    new_settings = self._supplementary_extract_settings(
+                        chapter=chapter, title=title, content=content, characters=characters,
+                    )
+                    if new_settings:
+                        import json
+                        settings_json = json.dumps(new_settings, ensure_ascii=False)
                     print("  定向修补完成，重新审校...")
                     prev_score = report["overall_score"]
                     continue
@@ -829,7 +905,7 @@ class WriterAgent:
         existing_loc_text = ", ".join(sorted(self.memory.locations.keys())) if self.memory.locations else "（无）"
         existing_sect_text = ", ".join(sorted(self.memory.sect_factions.keys())) if self.memory.sect_factions else "（无）"
         existing_items_text = ", ".join(sorted(self.memory.items.keys())) if self.memory.items else "（无）"
-        existing_tasks_text = self._build_existing_tasks_text()
+        existing_tasks_text = self._build_existing_tasks_text(chapter)
 
         system_prompt = SETTINGS_EXTRACT_SYSTEM_PROMPT
         user_prompt = (
@@ -844,6 +920,8 @@ class WriterAgent:
             f"## 输出格式（严格 JSON，不要其他内容）\n"
             f"{generate_settings_json_example()}\n\n"
             f"如果某类没有新增，该字段输出空数组。\n\n"
+            f"⚠️ 注意：如果正文出现'在XX以东/以西/以南/以北/东南/西北N里处'，必须提取到 spacemap_updates 的 direction 字段（如 "
+            "{'from_location':'青云宗','to_location':'药王谷','travel_time':'三日','direction':'东三百里'}）。\n\n"
             f"## 章节正文\n{content}"
         )
 

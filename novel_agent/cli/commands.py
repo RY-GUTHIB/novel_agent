@@ -532,6 +532,28 @@ def cmd_fs_map(memory, continuity, foreshadow, rag, project_name, ctx=None):
         print(f"❌ 生成失败：{e}")
 
 
+def cmd_de_ai(memory, continuity, foreshadow, rag, project_name, ctx=None):
+    """反高潮二创：对最新章节做去AI味改写"""
+    from novel_agent.agents.writer import WriterAgent
+    ctx = ctx or config.get_project_context()
+    existing = sorted(glob.glob(str(ctx.chapters_dir / "chapter_*.md")))
+    if not existing:
+        print("❌ 没有已生成的章节")
+        return
+    last_path = existing[-1]
+    chapter_num = int(Path(last_path).stem.split("_")[1])
+    with open(last_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    writer = WriterAgent(memory, continuity, foreshadow, rag, ctx)
+    print(f"  [进展] 正在对第{chapter_num}章做去AI改写...")
+    rewritten = writer.de_ai_rewrite(chapter_num, content)
+    if rewritten:
+        print(f"✅ 第{chapter_num}章去AI改写完成")
+        print(f"  原版备份：chapter_{chapter_num:03d}_pre_deai_*.md")
+    else:
+        print(f"❌ 去AI改写失败")
+
+
 def cmd_resolve_fs(memory, continuity, foreshadow, rag, project_name):
     print("\n=== 手动回收/放弃伏笔 ===")
     pending = foreshadow.get_pending()
@@ -606,7 +628,7 @@ def interactive_loop(project_name):
 
     while True:
         print(f"\n📖 当前项目：《{project_name}》")
-        print("命令：write | review | viz | status | new | add-fs | resolve-fs | fs-map | switch | list | quit")
+        print("命令：write | review | viz | status | new | add-fs | resolve-fs | fs-map | de-ai | switch | list | quit")
         cmd = input(">>> ").strip().lower()
 
         if cmd in ("quit", "exit", "q"):
@@ -628,6 +650,8 @@ def interactive_loop(project_name):
             cmd_resolve_fs(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "fs-map":
             cmd_fs_map(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
+        elif cmd == "de-ai":
+            cmd_de_ai(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
         elif cmd == "switch":
             new_name = select_project()
             if new_name != project_name:
@@ -647,6 +671,7 @@ def interactive_loop(project_name):
   add-fs     - 手动添加伏笔
   resolve-fs - 手动回收/放弃伏笔
   fs-map     - 生成伏笔总览
+  de-ai      - 对最新章节做去AI味改写
   switch     - 切换到其他小说项目
   list       - 列出所有项目
   quit       - 退出

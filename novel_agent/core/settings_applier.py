@@ -189,7 +189,7 @@ class SettingsApplier:
             if is_new:
                 self.memory.add_location(LocationProfile(
                     name=name, description=updates.get("description", ""),
-                    type=updates.get("type", "city"), connected_to=updates.get("connected_to", []),
+                    type=updates.get("type", "city"), connected_to=[],
                     first_appeared=chapter, notable_characters=updates.get("notable_characters", []),
                     notes=updates.get("notes", ""),
                 ))
@@ -246,27 +246,74 @@ class SettingsApplier:
                 continue
             travel_time = item.get("travel_time", "")
             is_bidir = item.get("is_bidirectional", True)
+            direction = item.get("direction", "").strip()
 
-            self._update_spacemap_edge(from_loc, to_loc, travel_time)
+            self._update_spacemap_edge(from_loc, to_loc, travel_time, direction)
+            reverse_dir = self._reverse_direction(direction) if direction else ""
             if is_bidir:
-                self._update_spacemap_edge(to_loc, from_loc, travel_time)
+                self._update_spacemap_edge(to_loc, from_loc, travel_time, reverse_dir)
             count += 1
         if count:
             self.continuity.save_spacemap()
+            for loc_name in list(self.continuity.spacemap.keys()):
+                if loc_name not in self.memory.locations:
+                    node = self.continuity.spacemap[loc_name]
+                    self.memory.add_location(LocationProfile(
+                        name=loc_name, description=node.description,
+                        type=node.type, connected_to=[],
+                        first_appeared=node.first_appeared,
+                        notable_characters=list(node.notable_characters),
+                        notes=node.notes,
+                    ))
+            self.memory.save_locations()
             print(f"  [设定提取·连通] 更新 {count} 条地点连通")
 
-    def _update_spacemap_edge(self, from_loc: str, to_loc: str, travel_time: str):
+    def _update_spacemap_edge(self, from_loc: str, to_loc: str,
+                               travel_time: str, direction: str = ""):
         if from_loc in self.continuity.spacemap:
             node = self.continuity.spacemap[from_loc]
             if to_loc not in node.connected_to:
                 node.connected_to.append(to_loc)
             if travel_time:
                 node.travel_time[to_loc] = travel_time
+            if direction:
+                node.relative_position[to_loc] = direction
         else:
-            self.continuity.add_location(LocationProfile(
-                name=from_loc, connected_to=[to_loc],
-                travel_time={to_loc: travel_time} if travel_time else {},
-            ))
+            rp = {to_loc: direction} if direction else {}
+            existing = self.memory.locations.get(from_loc)
+            if existing:
+                self.continuity.add_location(LocationProfile(
+                    name=from_loc, description=existing.description,
+                    type=existing.type, connected_to=[to_loc],
+                    travel_time={to_loc: travel_time} if travel_time else {},
+                    relative_position=rp,
+                    first_appeared=existing.first_appeared,
+                    notable_characters=list(existing.notable_characters),
+                    notes=existing.notes,
+                ))
+            else:
+                self.continuity.add_location(LocationProfile(
+                    name=from_loc, connected_to=[to_loc],
+                    travel_time={to_loc: travel_time} if travel_time else {},
+                    relative_position=rp,
+                ))
+
+    @staticmethod
+    def _reverse_direction(d: str) -> str:
+        """反转方向，支持"正东三百里"→"正西三百里"等"""
+        prefixes = ["正", "偏", "约", "大约"]
+        for p in prefixes:
+            if d.startswith(p):
+                return p + SettingsApplier._reverse_direction(d[len(p):])
+        dir_chars = ["东南", "西北", "东北", "西南", "东", "南", "西", "北"]
+        mapping = {
+            "东": "西", "西": "东", "南": "北", "北": "南",
+            "东南": "西北", "西北": "东南", "东北": "西南", "西南": "东北",
+        }
+        for dc in dir_chars:
+            if d.startswith(dc):
+                return mapping[dc] + d[len(dc):]
+        return ""
 
     def apply_plot_rules(self, items: list, chapter: int):
         count = 0

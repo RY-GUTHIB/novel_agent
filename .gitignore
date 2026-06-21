@@ -26,11 +26,15 @@ desktop.ini
 .env
 .env.local
 
-# Main entry point (contains API keys, keep local only)
+# Main entry point (local config, keep local only)
 config.py
 
 # Output (generated chapters, can be regenerated)
 projects/*/output/
+
+# Temporary files
+tmp_rag_test/
+tmp_test_final/
 
 # Runtime state (program-generated, not source)
 .current_project

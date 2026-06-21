@@ -2,7 +2,7 @@
 # 核心依赖
 openai>=1.0.0          # DeepSeek/Qwen/Ollama 使用 OpenAI 兼容 API
 tiktoken>=0.7.0        # token 计数
-flet>=0.25.0           # GUI 框架
+flet>=0.85.0           # GUI 框架
 
 # 向量数据库（RAG，可选）
 chromadb>=0.5.0

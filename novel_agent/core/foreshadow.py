@@ -205,14 +205,12 @@ class ForeshadowTracker(JsonRepositoryMixin):
         if normal:
             if expired:
                 lines.append(f"\n  🟡 其他待回收伏笔：")
-            for fs in normal[:10]:
+            for fs in normal:
                 char_str = f"，涉及人物：{', '.join(fs.related_characters)}" if fs.related_characters else ""
                 lines.append(
                     f"  [{fs.id}] 第{fs.chapter_planted}章埋下（重要度{fs.importance}）\n"
                     f"    内容：{fs.content}{char_str}"
                 )
-        if len(pending) > 10:
-            lines.append(f"  ...还有 {len(pending) - 10} 个伏笔未显示")
         return "\n".join(lines)
 
     def summarize(self) -> str:

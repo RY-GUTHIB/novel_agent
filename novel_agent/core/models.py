@@ -90,6 +90,7 @@ class LocationProfile:
     type: str = "city"
     connected_to: List[str] = field(default_factory=list)
     travel_time: Dict[str, str] = field(default_factory=dict)
+    relative_position: Dict[str, str] = field(default_factory=dict)
     first_appeared: int = 1
     notable_characters: List[str] = field(default_factory=list)
     notes: str = ""
@@ -312,6 +313,7 @@ def generate_settings_json_example() -> str:
         "spacemap_updates": [{
             "from_location": "A", "to_location": "B",
             "travel_time": "时间", "is_bidirectional": True,
+            "direction": "from_location 指向 to_location 的方向+距离（如 from=青云宗,to=药王谷 则填'东三百里'），或反之",
         }],
         "plot_rules": [{
             "condition": "条件", "consequence": "结果",
