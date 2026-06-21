@@ -1,11 +1,12 @@
 """
 settings_applier.py - SETTINGS_JSON 设定回写器
-
-从 writer.py 提取，封装所有 _apply_* 方法，
-减轻 WriterAgent（~1050行→~650行）的职责。
 """
 
+import logging
+
 from .memory import MemoryManager
+
+logger = logging.getLogger(__name__)
 from .continuity import ContinuityGuard
 from .models import (
     CharacterProfile, LocationProfile, WorldSetting,
@@ -40,7 +41,7 @@ class SettingsApplier:
             self.apply_timeline_events(parsed.get("timeline_events", []), chapter)
             self.apply_style(parsed.get("style", {}))
         except (KeyError, ValueError, TypeError, AttributeError) as e:
-            print(f"  [ERROR] 设定回写失败: {e}")
+            logger.error("设定回写失败: %s", e)
             raise
 
     # 路人名字（完全匹配才判定为路人，名字含职业/身份的有名字角色不跳过）
@@ -84,7 +85,7 @@ class SettingsApplier:
                 # 路人不记录：信息极少的人物跳过
                 if self._is_minor_character(name):
                     skipped_minor += 1
-                    print(f"  [设定提取·人物] 跳过路人角色：{name}")
+                    logger.debug("跳过路人角色：%s", name)
                     continue
                 new_char = CharacterProfile(
                     name=name, gender=updates.get("gender", ""), age=updates.get("age", ""),
@@ -156,7 +157,7 @@ class SettingsApplier:
                 parts.append(f"更新 {updated_count} 个人物")
             if skipped_minor:
                 parts.append(f"跳过路人 {skipped_minor} 个")
-            print(f"  [设定提取·人物] {', '.join(parts)}")
+            logger.info("人物: %s", ', '.join(parts))
 
     def apply_world_settings(self, items: list, chapter: int):
         count = 0
@@ -175,7 +176,7 @@ class SettingsApplier:
                 count += 1
         if count:
             self.memory.save_world_settings()
-            print(f"  [设定提取·世界] 新增 {count} 条世界设定")
+            logger.info("世界: 新增 %d 条世界设定", count)
 
     def apply_locations(self, items: list, chapter: int):
         new_count = updated_count = 0
@@ -214,7 +215,7 @@ class SettingsApplier:
                 parts.append(f"新增 {new_count} 个地点")
             if updated_count:
                 parts.append(f"更新 {updated_count} 个地点")
-            print(f"  [设定提取·地点] {', '.join(parts)}")
+            logger.info("地点: %s", ', '.join(parts))
 
     def apply_spatial_movements(self, items: list, chapter: int):
         count = 0
@@ -233,7 +234,7 @@ class SettingsApplier:
             count += 1
         if count:
             self.continuity.save_character_locations()
-            print(f"  [设定提取·空间] 记录 {count} 条人物移动")
+            logger.info("空间: 记录 %d 条人物移动", count)
 
     def apply_spacemap_updates(self, items: list):
         count = 0
@@ -266,7 +267,7 @@ class SettingsApplier:
                         notes=node.notes,
                     ))
             self.memory.save_locations()
-            print(f"  [设定提取·连通] 更新 {count} 条地点连通")
+            logger.info("连通: 更新 %d 条地点连通", count)
 
     def _update_spacemap_edge(self, from_loc: str, to_loc: str,
                                travel_time: str, direction: str = ""):
@@ -332,7 +333,7 @@ class SettingsApplier:
             ))
             count += 1
         if count:
-            print(f"  [设定提取·规则] 新增 {count} 条剧情规则")
+            logger.info("规则: 新增 %d 条剧情规则", count)
 
     def apply_character_knowledge(self, items: list, chapter: int):
         count = 0
@@ -350,7 +351,7 @@ class SettingsApplier:
             ))
             count += 1
         if count:
-            print(f"  [设定提取·认知] 新增 {count} 条角色认知")
+            logger.info("认知: 新增 %d 条角色认知", count)
 
     def apply_sect_factions(self, items: list, chapter: int):
         new_count = updated_count = 0
@@ -381,7 +382,7 @@ class SettingsApplier:
                 parts.append(f"新增 {new_count} 个势力")
             if updated_count:
                 parts.append(f"更新 {updated_count} 个势力")
-            print(f"  [设定提取·势力] {', '.join(parts)}")
+            logger.info("势力: %s", ', '.join(parts))
 
     def apply_scene_events(self, items: list, chapter: int):
         count = 0
@@ -399,7 +400,7 @@ class SettingsApplier:
             ))
             count += 1
         if count:
-            print(f"  [设定提取·场景] 新增 {count} 条场景事件")
+            logger.info("场景: 新增 %d 条场景事件", count)
 
     def apply_items(self, items: list, chapter: int):
         new_count = updated_count = 0
@@ -448,7 +449,7 @@ class SettingsApplier:
                 parts.append(f"新增 {new_count} 个物品")
             if updated_count:
                 parts.append(f"更新 {updated_count} 个物品")
-            print(f"  [设定提取·物品] {', '.join(parts)}")
+            logger.info("物品: %s", ', '.join(parts))
 
     def apply_tasks(self, tasks: list, chapter: int):
         from novel_agent.core.dedup import dedup_tasks
@@ -499,7 +500,7 @@ class SettingsApplier:
                 parts.append(f"新增 {new_count} 个任务")
             if updated_count:
                 parts.append(f"更新 {updated_count} 个任务")
-            print(f"  [设定提取·任务] {', '.join(parts)}")
+            logger.info("任务: %s", ', '.join(parts))
 
     def apply_timeline_events(self, events: list, chapter: int):
         count = 0
@@ -519,7 +520,7 @@ class SettingsApplier:
             )
             count += 1
         if count:
-            print(f"  [设定提取·时间线] 新增 {count} 个时间线事件")
+            logger.info("时间线: 新增 %d 个时间线事件", count)
 
     def apply_style(self, style_updates: dict):
         if not style_updates or not isinstance(style_updates, dict):

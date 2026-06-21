@@ -45,3 +45,8 @@ data/
 
 # Logs
 *.log
+
+# Vendor runtime binaries (not source code)
+/vendor/flet-desktop/
+/vendor/flet-windows.zip
+/vendor/models/

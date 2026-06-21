@@ -265,7 +265,15 @@ def check_api_key():
 
     name, key, source_hint = key_map[provider]
     if key:
-        print(f"使用模型：{provider}")
+        model_map = {
+            "deepseek": config.DEEPSEEK_MODEL,
+            "qwen": config.QWEN_MODEL,
+            "gemini": config.GEMINI_MODEL,
+            "claude": config.CLAUDE_MODEL,
+            "volcengine": config.VOLCENGINE_MODEL,
+        }
+        model_name = model_map.get(provider, provider)
+        print(f"使用模型：{provider}/{model_name}")
         return
 
     print(f"\n{'='*50}")
@@ -293,8 +301,7 @@ def check_api_key():
     except Exception as e:
         print(f"\n  保存失败：{e}")
         print(f"  请手动在 config.py 中设置 {name}")
-    print(f"使用模型：{provider}")
-
+    print(f"使用模型：{provider}/{model_name}")
 
 def generate_stream(system_prompt: str, user_prompt: str,
                     temperature: float = None,
@@ -357,17 +364,21 @@ def generate_stream(system_prompt: str, user_prompt: str,
 
 
 def parse_json(text: str) -> dict:
-    """从 LLM 输出中提取 JSON 对象，多层 fallback + 栈匹配 + 截断修复"""
+    """从 LLM 输出中提取 JSON 对象（拒绝顶层数组/标量）"""
     # 第1层：直接解析
     try:
-        return json.loads(text)
+        result = json.loads(text)
+        if isinstance(result, dict):
+            return result
     except json.JSONDecodeError:
         pass
     # 第2层：提取 markdown 代码块
     match = _JSON_BLOCK_PATTERN.search(text)
     if match:
         try:
-            return json.loads(match.group(1))
+            result = json.loads(match.group(1))
+            if isinstance(result, dict):
+                return result
         except json.JSONDecodeError:
             pass
     # 第3层：用栈算法找到第一个完整闭合的 JSON 对象

@@ -86,15 +86,14 @@ class PlannerAgent:
 
             try:
                 outline = self._extract_json(response)
+                if outline is not None:
+                    self._init_from_outline(outline)
+                    return outline
             except ValueError as e:
                 if attempt < max_retries:
                     logger.warning("%s，重试 (%d/%d)...", e, attempt + 2, max_retries + 1)
                     continue
                 raise
-
-            if outline is not None:
-                self._init_from_outline(outline)
-                return outline
 
             if attempt < max_retries:
                 logger.warning("JSON 解析失败，重试 (%d/%d)...", attempt + 2, max_retries + 1)
@@ -114,11 +113,44 @@ class PlannerAgent:
         )
         new_outline = self._extract_json(response)
         if new_outline:
-            self._init_from_outline(new_outline, clear=True)
+            try:
+                self._init_from_outline(new_outline, clear=True)
+            except ValueError as e:
+                logger.warning("大纲精炼结构检查失败: %s", e)
+                raise
         return new_outline
+
+    def _validate_outline_structure(self, outline: dict):
+        """检查大纲关键字段类型，不符合则抛 ValueError 触发 LLM 重试"""
+        required = {
+            "meta": dict,
+            "volumes": list,
+            "characters": list,
+            "locations": list,
+            "factions": list,
+            "key_items": list,
+            "foreshadows": list,
+        }
+        for key, expected in required.items():
+            val = outline.get(key)
+            if val is not None and not isinstance(val, expected):
+                raise ValueError(
+                    f"大纲字段 '{key}' 类型错误: 期望 {expected.__name__}，实际 {type(val).__name__}，触发重试"
+                )
+        # volumes 里的每个元素必须是 dict
+        for vol in outline.get("volumes", []):
+            if not isinstance(vol, dict):
+                raise ValueError(f"volumes 中的元素不是对象，触发重试")
+            arc = vol.get("arc")
+            if arc is not None and not isinstance(arc, dict):
+                raise ValueError(f"卷 {vol.get('volume', '?')} 的 arc 应为对象，实际为 {type(arc).__name__}，触发重试")
+            for ch in vol.get("chapters", []):
+                if not isinstance(ch, dict):
+                    raise ValueError(f"卷 {vol.get('volume', '?')} 的 chapters 中存在非对象元素，触发重试")
 
     def _init_from_outline(self, outline: Dict, clear: bool = True):
         """将大纲数据写入各管理模块"""
+        self._validate_outline_structure(outline)
         if clear:
             self.memory.characters.clear()
             self.memory.locations.clear()
@@ -198,7 +230,16 @@ class PlannerAgent:
                 alignment=c_data.get("alignment", ""),
                 first_appeared=first_app,
                 arc=c_data.get("exit_point", ""),
+                cultivation=c_data.get("cultivation", ""),
+                current_location=c_data.get("current_location", ""),
             ))
+            # 同步初始位置到连续性模块
+            loc = c_data.get("current_location", "")
+            if loc:
+                self.continuity.add_character_location(
+                    chapter=first_app, character=c_data["name"], location=loc,
+                    note="大纲初始位置",
+                )
 
     def _init_locations(self, outline: Dict):
         for loc_data in outline.get("locations", []):
@@ -569,9 +610,9 @@ class PlannerAgent:
 
     @staticmethod
     def _extract_json(text: str) -> Dict:
-        """从 LLM 输出中提取 JSON（委托给 client.parse_json，含截断修复）"""
+        """从 LLM 输出中提取 JSON 对象"""
         result = parse_json(text)
-        if result is not None:
+        if isinstance(result, dict):
             return result
         raise ValueError(
             "大纲 JSON 解析失败：无法从 LLM 输出中提取有效的 JSON 对象。"

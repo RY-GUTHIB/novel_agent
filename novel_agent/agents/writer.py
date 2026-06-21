@@ -77,14 +77,13 @@ class WriterAgent:
         pre_warnings = self.memory.validate_chapter_characters(chapter, characters)
         if pre_warnings:
             for w in pre_warnings:
-                print(f"    {w}")
+                logger.warning("%s", w)
         generation_contract = self.memory.get_generation_contract(chapter, characters)
 
         # 2. 构建 prompt
         anti_ai_rules = self._build_anti_ai_rules()
         system_prompt = CHAPTER_WRITER_SYSTEM_PROMPT.format(
             genre=self.genre, style=self.style, word_target=config.CHAPTER_WORD_TARGET,
-            settings_json_example=generate_settings_json_example(),
             anti_ai_rules=anti_ai_rules,
         )
         user_prompt = self._build_writer_user_prompt(
@@ -106,8 +105,8 @@ class WriterAgent:
             raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
                                   temperature=temperature, max_tokens=config.MAX_TOKENS)
 
-        # 4. 解析：分离正文和设定 JSON
-        content, settings_json = self._split_output_and_settings(raw_output)
+        # 4. 解析：分离正文，统一走后端补充提取
+        content, _ = self._split_output_and_settings(raw_output)
 
         # DEBUG: 打印原始返回内容（便于排查 LLM 返回过短问题）
         logger.debug("LLM raw_output (前500字): %s", raw_output[:500] if raw_output else "(空)")
@@ -117,14 +116,12 @@ class WriterAgent:
             logger.warning("LLM 返回内容过短，原始内容前200字: %s", raw_output[:200] if raw_output else "(空)")
             raise RuntimeError(f"LLM 返回内容过短（{len(content) if content else 0} 字），请重试")
 
-        # 补充提取：有正文但无 settings_json
-        if content and len(content.strip()) >= 50 and settings_json is None:
-            print("  [WARN] LLM 未输出 SETTINGS_JSON，尝试补充提取...")
-            settings_json = self._supplementary_extract_settings(content, chapter, title, characters)
-            if settings_json:
-                print(f"  [补充提取] 成功提取设定")
-            else:
-                print(f"  [补充提取] 提取失败，设定将缺失")
+        # 统一走补充提取
+        settings_json = self._supplementary_extract_settings(content, chapter, title, characters)
+        if settings_json:
+            logger.info("补充提取设定成功")
+        else:
+            logger.warning("补充提取设定失败，设定将缺失")
 
         return content, settings_json
 
@@ -151,16 +148,14 @@ class WriterAgent:
         raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
                               temperature=temperature, max_tokens=config.MAX_TOKENS)
 
-        content, settings_json = self._split_output_and_settings(raw_output)
+        content, _ = self._split_output_and_settings(raw_output)
 
-        # 补充提取：有正文但无 settings_json
-        if content and len(content.strip()) >= 50 and settings_json is None:
-            print("  [WARN] LLM 未输出 SETTINGS_JSON，尝试补充提取...")
-            settings_json = self._supplementary_extract_settings(content, chapter, title, characters)
-            if settings_json:
-                print(f"  [补充提取] 成功提取设定")
-            else:
-                print(f"  [补充提取] 提取失败，设定将缺失")
+        # 统一走补充提取
+        settings_json = self._supplementary_extract_settings(content, chapter, title, characters)
+        if settings_json:
+            logger.info("补充提取设定成功")
+        else:
+            logger.warning("补充提取设定失败，设定将缺失")
 
         return content, settings_json
 
@@ -245,14 +240,6 @@ class WriterAgent:
         )
         rag_context = self._get_rag_context(chapter, title, summary, characters)
 
-        # 设定提取上下文
-        char_summary_text = self._build_char_summary(characters)
-        existing_ws_text = ", ".join(sorted(self.memory.world_settings.keys())) if self.memory.world_settings else "（无）"
-        existing_loc_text = ", ".join(sorted(self.memory.locations.keys())) if self.memory.locations else "（无）"
-        existing_sect_text = ", ".join(sorted(self.memory.sect_factions.keys())) if self.memory.sect_factions else "（无）"
-        existing_items_text = ", ".join(sorted(self.memory.items.keys())) if self.memory.items else "（无）"
-        existing_tasks_text = self._build_existing_tasks_text(chapter)
-
         # 上一章结尾钩子
         prev_chapter_ending = self._get_prev_chapter_ending(chapter)
         # 前章全文参考
@@ -285,13 +272,6 @@ class WriterAgent:
             foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
             rag_context=rag_context,
             state_snapshot=state_snapshot,
-            char_summary_text=char_summary_text,
-            existing_ws_text=existing_ws_text,
-            existing_loc_text=existing_loc_text,
-            existing_sect_text=existing_sect_text,
-            existing_items_text=existing_items_text,
-            existing_tasks_text=existing_tasks_text,
-            settings_json_example=generate_settings_json_example(),
             rhythm=self._get_rhythm_for_chapter(chapter),
             beat_type=self._get_beat_type_for_chapter(chapter),
             hook_type=self._get_hook_type_for_chapter(chapter),
@@ -795,8 +775,8 @@ class WriterAgent:
                 max_tokens=2048,
             )
             result = parse_json(raw)
-            if not result:
-                logger.warning("审校报告解析：JSON 解析失败，跳过")
+            if not isinstance(result, dict):
+                logger.warning("审校报告解析：JSON 解析失败（不是对象），跳过")
                 return {"tasks": 0, "foreshadows": 0}
 
             task_count = 0
@@ -827,16 +807,16 @@ class WriterAgent:
                 fs_count += 1
 
             if task_count or fs_count:
-                print(f"  [审校→任务/伏笔] 新增 {task_count} 个任务，{fs_count} 个伏笔")
+                logger.info("审校→任务/伏笔: 新增 %d 个任务，%d 个伏笔", task_count, fs_count)
                 self.memory.save_tasks()
                 self.foreshadow.save()
             else:
-                print(f"  [审校→任务/伏笔] 无新增内容")
+                logger.debug("审校→任务/伏笔: 无新增内容")
 
             return {"tasks": task_count, "foreshadows": fs_count}
 
         except Exception as e:
-            logger.warning(f"审校报告解析失败: {e}")
+            logger.warning("审校报告解析失败: %s", e)
             return {"tasks": 0, "foreshadows": 0}
 
     # ========== 输出解析 ==========

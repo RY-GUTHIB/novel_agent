@@ -3,10 +3,13 @@
 所有设置持久化到 config.SETTINGS_FILE (settings.json)。
 """
 import json
+import logging
 import os
 import threading
 import flet as ft
 import config
+
+logger = logging.getLogger(__name__)
 from novel_agent.gui.state import AppState
 
 _PROVIDER_KEY_MAP = {
@@ -32,7 +35,7 @@ def _load_settings() -> dict:
             with open(config.SETTINGS_FILE, encoding="utf-8") as f:
                 return json.load(f)
     except Exception as e:
-        print(f"[settings] load failed: {e}")
+        logger.warning("settings load failed: %s", e)
     return {}
 
 
@@ -40,7 +43,7 @@ def _save_settings_to_disk(data: dict):
     config.SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(config.SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"[settings] saved to {config.SETTINGS_FILE}")
+    logger.info("settings saved to %s", config.SETTINGS_FILE)
 
 
 def _snackbar(page: ft.Page, message: str, color: str = "green"):

@@ -65,6 +65,19 @@ class ReviewerAgent:
         timeline_events = self.continuity.timeline if self.continuity else None
         state_snapshot = self.memory.build_state_snapshot(chapter, characters or [], timeline_events)
 
+        # 构建首次出场角色信息（前序章节无位置记录的视为首次出场）
+        first_appearance_chars = []
+        for char_name in (characters or []):
+            if char_name not in self.memory.characters:
+                continue  # 不在档案中的角色不会出现在 character_prompts，跳过
+            has_prev = any(
+                cl.chapter < chapter and cl.character == char_name
+                for cl in self.continuity.character_locations
+            )
+            if not has_prev:
+                first_appearance_chars.append(char_name)
+        first_appearance_text = "、".join(first_appearance_chars) if first_appearance_chars else "（无）"
+
         anti_ai_rules = self._build_anti_ai_rules()
         user_prompt = REVIEWER_USER_PROMPT.format(
             chapter=chapter, title=title, content=content,
@@ -82,7 +95,9 @@ class ReviewerAgent:
             style_prompt=self.memory.get_style_prompt(),
             logic_constraints=logic_constraints or "（无特殊逻辑约束）",
             state_snapshot=state_snapshot,
+            outline_context=self.memory.get_outline_context_prompt(chapter),
             anti_ai_rules=anti_ai_rules,
+            first_appearance_info=first_appearance_text,
         )
 
         response = generate(
@@ -104,6 +119,8 @@ class ReviewerAgent:
         if json_match:
             try:
                 parsed = json.loads(json_match.group(1))
+                if not isinstance(parsed, dict):
+                    raise ValueError("审校 JSON 不是对象")
                 field_map = {
                     "continuity": "连续性", "cultivation": "修为连贯性", "spatial": "空间连续性",
                     "character": "人物一致性", "foreshadow": "伏笔管理", "plot": "情节推进",
@@ -122,7 +139,7 @@ class ReviewerAgent:
                 v = parsed.get("verdict", "")
                 if v:
                     verdict = v
-            except (json.JSONDecodeError, ValueError, KeyError) as e:
+            except (json.JSONDecodeError, ValueError, KeyError, AttributeError, TypeError) as e:
                 logger.warning(f"审校 JSON 解析失败，回退到正则: {e}")
 
         # Fallback：正则

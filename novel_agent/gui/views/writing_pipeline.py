@@ -3,9 +3,12 @@
 步骤: 预检 → 生成(流式) → 审校(含修订) → 定稿
 """
 import asyncio
+import logging
 import threading
 import queue
 import flet as ft
+
+logger = logging.getLogger(__name__)
 from novel_agent.gui.state import AppState
 from novel_agent.gui.widgets.step_pipeline import StepPipeline
 from novel_agent.gui.widgets.streaming_viewer import StreamingViewer
@@ -356,7 +359,7 @@ class WritingPipelineView(ft.Column):
                 rebuild_novel_md(str(ctx.output_dir))
                 update_project_memory(project_name, memory, continuity, foreshadow, str(ctx.output_dir))
             except Exception as ex:
-                print(f"[writing_pipeline] post-finalize error: {ex}")
+                logger.error("post-finalize error: %s", ex)
 
         # 刷新章节列表
         self._refresh_chapters()
