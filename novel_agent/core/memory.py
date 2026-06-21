@@ -692,7 +692,7 @@ class MemoryManager(JsonRepositoryMixin):
             parts.append("\n## ⚠️ 承诺清单：（无未兑现承诺）")
 
         # 5. 任务清单（活跃的长线任务/目标）
-        active_tasks = self.get_active_tasks(current_chapter=chapter, limit=5)
+        active_tasks = self.get_active_tasks(current_chapter=chapter)
         if active_tasks:
             parts.append("\n## 🎯 任务清单（活跃，跨章节长线任务）")
             for t in active_tasks:
@@ -730,7 +730,7 @@ class MemoryManager(JsonRepositoryMixin):
         self.task_tracker._load()
         self.tasks = self.task_tracker.tasks
 
-    def get_active_tasks(self, current_chapter: int = 99999, limit: int = 5) -> List[TaskProfile]:
+    def get_active_tasks(self, current_chapter: int = 99999, limit: int = 0) -> List[TaskProfile]:
         return self.task_tracker.get_active(current_chapter, limit)
 
     def add_task(self, task: TaskProfile):

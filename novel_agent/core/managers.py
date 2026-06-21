@@ -99,11 +99,11 @@ class TaskTracker(JsonRepositoryMixin):
         data = {k: asdict(v) for k, v in self.tasks.items()}
         self._save_json("tasks.json", data)
 
-    def get_active(self, current_chapter: int = 99999, limit: int = 5) -> List[TaskProfile]:
+    def get_active(self, current_chapter: int = 99999, limit: int = 0) -> List[TaskProfile]:
         active = [t for t in self.tasks.values()
                   if t.status == "active" and t.chapter_created <= current_chapter]
         active.sort(key=lambda t: t.chapter_created)
-        return active[:limit]
+        return active if limit <= 0 else active[:limit]
 
     def add(self, task: TaskProfile):
         import uuid
