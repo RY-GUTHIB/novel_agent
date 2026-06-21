@@ -2,18 +2,20 @@
 backfill_spatial.py - 从已写章节中补录空间移动数据到 character_locations.json 和 spacemap.json
 """
 import json
+import sys
 import config
 from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.models import LocationProfile
 from novel_agent.llm.client import generate
 
-ctx = config.set_project("苍穹独狼")
+project_name = sys.argv[1] if len(sys.argv) > 1 else "苍穹独狼"
+ctx = config.set_project(project_name)
 continuity = ContinuityGuard(data_dir=ctx.data_dir)
 
 # 读取所有章节
 import os
 chapters = []
-ch_dir = "projects/苍穹独狼/output/chapters/"
+ch_dir = ctx.output_dir / "chapters"
 for fname in sorted(os.listdir(ch_dir)):
     if fname.startswith("chapter_") and fname.endswith(".md"):
         ch_num = int(fname.replace("chapter_", "").replace(".md", ""))

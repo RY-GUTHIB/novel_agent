@@ -43,8 +43,36 @@ class SettingsApplier:
             print(f"  [ERROR] 设定回写失败: {e}")
             raise
 
+    # 路人名字（完全匹配才判定为路人，名字含职业/身份的有名字角色不跳过）
+    # 注意：子串匹配（如"掌柜"匹配"王掌柜"）会导致误跳过，因此只做完全匹配
+    _MINOR_NAME_KEYWORDS = (
+        # 餐饮/服务
+        "小二", "店小二", "伙计", "跑堂",
+        "掌柜", "老板",
+        # 仆役/杂役
+        "小厮", "仆人", "下人", "杂役", "奴仆", "丫鬟", "侍女", "侍从",
+        # 兵卒/守卫（单独出现时无名字）
+        "守卫", "兵卒", "士兵", "晓卒", "卫兵", "亲兵",
+        # 泛指/匿名
+        "路人", "百姓", "平民", "民众", "群众", "围观", "过客", "行人",
+        "乞丐", "流民", "难民",
+        "匿名", "无名", "某某", "某人",
+        # 商贩
+        "小贩", "摊贩", "商贩", "货郎",
+        # 门派底层（单独出现时无名字）
+        "外门弟子", "杂役弟子", "记名弟子",
+        # 其他功能性称呼
+        "媒婆", "稳婆", "仵作", "轿夫", "马夫", "船夫",
+        # 复合称呼（LLM 可能直接输出的完整称呼）
+        "店小二", "守门侍卫", "巡逻兵卒", "杂役弟子", "外门执事",
+    )
+
+    def _is_minor_character(self, name: str) -> bool:
+        """判断是否为路人角色（仅完全匹配关键词才跳过，含名字的不跳过）"""
+        return name in self._MINOR_NAME_KEYWORDS
+
     def apply_characters(self, items: list, chapter: int):
-        new_count = updated_count = 0
+        new_count = updated_count = skipped_minor = 0
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -53,6 +81,11 @@ class SettingsApplier:
             updates = item.get("updates", {})
 
             if is_new:
+                # 路人不记录：信息极少的人物跳过
+                if self._is_minor_character(name):
+                    skipped_minor += 1
+                    print(f"  [设定提取·人物] 跳过路人角色：{name}")
+                    continue
                 new_char = CharacterProfile(
                     name=name, gender=updates.get("gender", ""), age=updates.get("age", ""),
                     appearance=updates.get("appearance", ""), personality=updates.get("personality", ""),
@@ -60,6 +93,8 @@ class SettingsApplier:
                     speaking_style=updates.get("speaking_style", ""), abilities=updates.get("abilities", []),
                     relationships=updates.get("relationships", {}), status=updates.get("status", "alive"),
                     first_appeared=chapter, arc=updates.get("arc", ""), notes=updates.get("notes", ""),
+                    learned_skills=updates.get("learned_skills", []),
+                    faction=updates.get("faction", ""), faction_status=updates.get("faction_status", ""),
                 )
                 for other, ctx in updates.get("relationship_contexts", {}).items():
                     if isinstance(ctx, dict):
@@ -112,13 +147,15 @@ class SettingsApplier:
                                 })
                 updated_count += 1
 
-        if new_count or updated_count:
+        if new_count or updated_count or skipped_minor:
             self.memory.save_characters()
             parts = []
             if new_count:
                 parts.append(f"新增 {new_count} 个人物")
             if updated_count:
                 parts.append(f"更新 {updated_count} 个人物")
+            if skipped_minor:
+                parts.append(f"跳过路人 {skipped_minor} 个")
             print(f"  [设定提取·人物] {', '.join(parts)}")
 
     def apply_world_settings(self, items: list, chapter: int):
@@ -338,6 +375,7 @@ class SettingsApplier:
                     current_holder=updates.get("current_holder", ""),
                     prohibited_actions=["give_again_by_other", "duplicate"],
                     status=updates.get("status", "active"),
+                    notes=updates.get("notes", ""),
                 ))
                 new_count += 1
             elif name in self.memory.items:
@@ -366,35 +404,46 @@ class SettingsApplier:
             print(f"  [设定提取·物品] {', '.join(parts)}")
 
     def apply_tasks(self, tasks: list, chapter: int):
+        from novel_agent.core.dedup import dedup_tasks
         new_count = updated_count = 0
+        parsed = []
         for t in tasks:
             if not isinstance(t, dict):
                 continue
             task_id = t.get("id", "").strip()
             if not task_id:
                 continue
-            if task_id not in self.memory.tasks:
-                self.memory.add_task(TaskProfile(
-                    id=task_id,
-                    name=t.get("name", ""),
-                    description=t.get("description", ""),
-                    status=t.get("status", "active"),
-                    chapter_created=chapter,
-                    chapter_completed=None,
-                    progress=t.get("progress", ""),
-                    related_items=t.get("related_items", []),
-                    related_characters=t.get("related_characters", []),
-                ))
-                new_count += 1
-            elif task_id in self.memory.tasks:
-                updates = t.get("updates", {})
-                prog = t.get("progress", "") or updates.get("progress", "")
-                status = t.get("status", "") or updates.get("status", "")
-                if prog:
-                    self.memory.update_task_progress(task_id, prog)
-                if status == "completed":
-                    self.memory.complete_task(task_id, chapter)
-                updated_count += 1
+            # 先去重（名称 + 章节）
+            parsed.append(TaskProfile(
+                id=task_id,
+                name=t.get("name", ""),
+                description=t.get("description", ""),
+                status=t.get("status", "active"),
+                chapter_created=chapter,
+                chapter_completed=None,
+                progress=t.get("progress", ""),
+                related_items=t.get("related_items", []),
+                related_characters=t.get("related_characters", []),
+            ))
+        deduped = dedup_tasks(parsed, self.memory.tasks)
+        for tp in deduped:
+            self.memory.add_task(tp)
+            new_count += 1
+        # 更新已有任务（按 ID 匹配）
+        for t in tasks:
+            if not isinstance(t, dict):
+                continue
+            task_id = t.get("id", "").strip()
+            if not task_id or task_id not in self.memory.tasks:
+                continue
+            updates = t.get("updates", {})
+            prog = t.get("progress", "") or updates.get("progress", "")
+            status = t.get("status", "") or updates.get("status", "")
+            if prog:
+                self.memory.update_task_progress(task_id, prog)
+            if status == "completed":
+                self.memory.complete_task(task_id, chapter)
+            updated_count += 1
 
         if new_count or updated_count:
             self.memory.save_tasks()

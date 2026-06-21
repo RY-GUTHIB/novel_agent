@@ -11,7 +11,9 @@ PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import set_project
-ctx = set_project("苍穹独狼")
+
+project_name = sys.argv[1] if len(sys.argv) > 1 else "苍穹独狼"
+ctx = set_project(project_name)
 
 from novel_agent.core.memory import MemoryManager, CharacterKnowledge
 

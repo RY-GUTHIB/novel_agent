@@ -1,0 +1,17 @@
+{
+  "llm_provider": "volcengine",
+  "model": "deepseek-v4-flash",
+  "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+  "temperature": 0.7,
+  "max_tokens": 8192,
+  "top_p": 0.9,
+  "auto_review": true,
+  "auto_revise": true,
+  "auto_finalize": false,
+  "auto_fs": true,
+  "volcengine_api_key": "",
+  "deepseek_api_key": "",
+  "qwen_api_key": "",
+  "gemini_api_key": "",
+  "claude_api_key": ""
+}

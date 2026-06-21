@@ -9,12 +9,19 @@ RRF（Reciprocal Rank Fusion）融合排序，
 1. 存储：每章生成后，自动切片向量化存储 + BM25 索引更新
 2. 检索：向量检索（语义相似）+ BM25（关键词精确匹配）→ RRF 融合
 3. 检索维度：人物状态、地点描述、伏笔、时间线事件
+
+嵌入模型：通过 embedding_service 统一管理 sentence_transformers
 """
 
+import logging
 import os
 import re
 from pathlib import Path
 from typing import List, Dict
+
+from .embedding_service import get_embedding_service
+
+logger = logging.getLogger(__name__)
 
 
 class RAGStore:
@@ -24,10 +31,6 @@ class RAGStore:
         self.persist_dir = str(Path(persist_dir) / "vector_db")
         self.top_k = top_k
         self.chunk_size = chunk_size
-        # 模型缓存目录（换电脑时只需复制此目录，避免重新下载）
-        model_cache = Path(persist_dir) / "models" / "sentence-transformers"
-        model_cache.mkdir(parents=True, exist_ok=True)
-        os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(model_cache)
         self._client = None
         self._collection = None
         # BM25 相关
@@ -42,14 +45,32 @@ class RAGStore:
             return
         try:
             import chromadb
-            from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
         except ImportError:
             raise ImportError("请先安装 chromadb: pip install chromadb>=0.5.0")
 
-        # 使用对中文支持更好的嵌入模型
-        self._embedding_fn = SentenceTransformerEmbeddingFunction(
-            model_name="BAAI/bge-small-zh-v1.5",
-        )
+        # 使用项目内 embedding_service 管理的 sentence_transformers 模型（指向 vendor/models/ 本地路径）
+        embedding_service = get_embedding_service(model_cache_dir=str(
+            Path(__file__).parent.parent.parent / "vendor" / "models"
+        ))
+        model = embedding_service.get_model()
+
+        # 包装为 ChromaDB 兼容的 embedding function
+        class ProjectEmbeddingFunction:
+            def __init__(self, mn: str):
+                self._name = f"project_{mn}"
+            def name(self) -> str:
+                return self._name
+            def __call__(self, input: List[str]) -> List[List[float]]:
+                embeddings = model.encode(input, normalize_embeddings=True)
+                return embeddings.tolist()
+            def embed_query(self, input: str) -> List[float]:
+                embedding = model.encode(input, normalize_embeddings=True)
+                return embedding.tolist()
+            def embed_document(self, input: str) -> List[float]:
+                embedding = model.encode(input, normalize_embeddings=True)
+                return embedding.tolist()
+
+        self._embedding_fn = ProjectEmbeddingFunction(embedding_service.model_name)
         self._client = chromadb.PersistentClient(path=self.persist_dir)
         self._collection = self._client.get_or_create_collection(
             name="novel_chunks",
@@ -76,7 +97,8 @@ class RAGStore:
                 tokenized = [self._tokenize(d) for d in self._bm25_docs]
                 self._bm25 = BM25Okapi(tokenized)
                 self._bm25_dirty = False
-        except Exception:
+        except Exception as e:
+            logger.warning("BM25 索引重建失败: %s", e)
             self._bm25_docs = []
             self._bm25_metas = []
             self._bm25 = None
@@ -112,8 +134,8 @@ class RAGStore:
             )
             if existing_ids and existing_ids.get("ids"):
                 self._collection.delete(ids=existing_ids["ids"])
-        except Exception:
-            pass  # 首次写入无旧数据
+        except (ValueError, KeyError):
+            pass  # 首次写入无旧数据时 ChromaDB 可能抛此类异常
 
         chunks = self._chunk_text(content)
         if not chunks:
@@ -330,10 +352,17 @@ class RAGStore:
         """清空向量库"""
         import shutil
         import os
-        if os.path.exists(self.persist_dir):
-            shutil.rmtree(self.persist_dir)
+        # 先释放 ChromaDB 连接
         self._client = None
         self._collection = None
+        if os.path.exists(self.persist_dir):
+            for retry in range(3):
+                try:
+                    shutil.rmtree(self.persist_dir)
+                    break
+                except PermissionError:
+                    import time
+                    time.sleep(0.5)
         self._bm25 = None
         self._bm25_docs = []
         self._bm25_metas = []

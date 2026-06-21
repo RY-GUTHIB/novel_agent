@@ -9,18 +9,18 @@
 
 ### Python 路径（重要）
 
-本项目**不能用系统 `python`**，必须用管理环境：
+本项目**不能用系统 `python`**，必须用管理环境（以下为示例，请替换为你的实际 Python 路径）：
 
 ```
-C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\python.exe
+<python_env_path>/python.exe
 ```
 
-**Windows 快捷方式：** 在任何地方把上面的路径存成一个 `.bat` 文件，比如 `run_agent.bat`：
+**Windows 快捷方式：** 把 Python 路径存成一个 `.bat` 文件，比如 `run_agent.bat`：
 
 ```bat
 @echo off
-cd /d E:\WorkBuddy\novel_agent
-"C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\python.exe" main.py %*
+cd /d <project_root>
+<python_env_path>/python.exe main.py %*
 pause
 ```
 
@@ -30,12 +30,12 @@ pause
 
 管理环境的 pip 路径：
 ```
-C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\pip.exe
+<python_env_path>/pip.exe
 ```
 
 安装依赖（如果还没装）：
 ```bash
-C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\pip.exe install -r requirements.txt
+<python_env_path>/pip.exe install -r requirements.txt
 ```
 
 ### API Key
@@ -57,8 +57,8 @@ DEEPSEEK_API_KEY = "sk-..."     # 备用后端（DeepSeek）
 ### 方式 A：交互式 CLI（推荐，适合逐章操作）
 
 ```bash
-cd E:\WorkBuddy\novel_agent
-"C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\python.exe" main.py
+cd <project_root>
+<python_env_path>/python.exe main.py
 ```
 
 启动后：
@@ -143,7 +143,7 @@ fs-map              → 生成伏笔总览（Markdown）
 
 生成后文件在：
 ```
-E:\WorkBuddy\novel_agent\projects\<项目名>\output\
+<project_root>/projects/<项目名>/output/
 ├── timeline.html        # 时间线可视化
 ├── character_map.html   # 人物关系图
 ├── world_map.html       # 世界地图
@@ -162,14 +162,14 @@ E:\WorkBuddy\novel_agent\projects\<项目名>\output\
 
 **解决：** 在本地 Windows 直接运行（不在 WorkBuddy 沙箱内），或手动创建 `.current_project` 文件：
 ```bash
-echo <项目名> > E:\WorkBuddy\novel_agent\projects\.current_project
+echo <项目名> > <project_root>/projects/.current_project
 ```
 
 ### Q: `python` 命令找不到 / 用了错误版本
 
 **解决：** 始终用完整路径：
 ```
-C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\python.exe
+<python_env_path>/python.exe
 ```
 
 ### Q: DeepSeek API 报错
@@ -181,7 +181,7 @@ C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\python.exe
 
 **方法：** 删除该章节文件，再 `write --ch N`：
 ```bash
-del E:\WorkBuddy\novel_agent\projects\<项目名>\output\chapters\chapter_022.md
+del <project_root>/projects/<项目名>/output/chapters/chapter_022.md
 python main.py write --ch 22
 ```
 
@@ -211,8 +211,8 @@ python main.py write --ch 22
 `scripts/daily_write.bat`：
 ```bat
 @echo off
-cd /d E:\WorkBuddy\novel_agent
-set PY=C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\python.exe
+cd /d <project_root>
+set PY=<python_env_path>/python.exe
 %PY% main.py write
 %PY% main.py review
 %PY% main.py viz
@@ -222,4 +222,4 @@ pause
 ### 定时任务（Windows 任务计划器）
 
 触发器：每天 20:00
-操作：运行 `E:\WorkBuddy\novel_agent\scripts\daily_write.bat`
+操作：运行 `<project_root>/scripts/daily_write.bat`

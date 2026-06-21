@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 from typing import Dict
 
+import config
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
 
@@ -21,7 +22,7 @@ from novel_agent.core.continuity import ContinuityGuard
 
 def _load_vendor(file_name: str) -> str:
     """读取 vendor 目录下的 JS/CSS 文件内容"""
-    vendor_path = Path(__file__).parent.parent.parent / "vendor" / file_name
+    vendor_path = config.VENDOR_DIR / file_name
     if vendor_path.exists():
         with open(vendor_path, "r", encoding="utf-8") as f:
             return f.read()
@@ -175,7 +176,8 @@ def generate_character_map_html(memory_mgr: MemoryManager,
         "同": "#00BCD4",      # 同门/同学 → 青色
     }
     for edge in edges:
-        rel = edge.get("relation", "")
+        rel_raw = edge.get("relation", "")
+        rel = rel_raw if isinstance(rel_raw, str) else rel_raw.get("type", str(rel_raw))
         # 关键词匹配颜色
         edge_color = "#999"
         for keyword, color in edge_color_keywords.items():

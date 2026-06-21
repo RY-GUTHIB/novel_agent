@@ -81,8 +81,12 @@ def main():
             idx = sys.argv.index("--ch")
             try:
                 ch = int(sys.argv[idx + 1])
+                if ch < 1:
+                    print("❌ 章节号必须大于 0")
+                    return
             except (IndexError, ValueError):
-                pass
+                print("❌ --ch 参数必须是正整数")
+                return
         cmd_write(memory, continuity, foreshadow, rag, project_name, chapter=ch)
     elif command == "review":
         cmd_review(memory, continuity, foreshadow, rag, project_name)

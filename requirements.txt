@@ -2,10 +2,16 @@
 # 核心依赖
 openai>=1.0.0          # DeepSeek/Qwen/Ollama 使用 OpenAI 兼容 API
 tiktoken>=0.7.0        # token 计数
+flet>=0.25.0           # GUI 框架
 
 # 向量数据库（RAG，可选）
 chromadb>=0.5.0
 rank_bm25>=0.2.0       # BM25 混合检索
+
+# 嵌入模型推理（ONNX，轻量无 torch）
+# 模型已预置在 vendor/models/bge-small-zh-v1.5/onnx/ 下，离线可用
+onnxruntime>=1.18.0
+tokenizers>=0.21.0
 
 # 其他 LLM 后端（按需安装）
 # google-generativeai>=0.8.0  # Gemini

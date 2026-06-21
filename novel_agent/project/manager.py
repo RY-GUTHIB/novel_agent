@@ -38,8 +38,20 @@ def list_projects():
     for d in sorted(config.PROJECTS_ROOT.iterdir()):
         if d.is_dir() and (d / CONFIG_FILE).exists():
             cfg = load_project_config(d.name)
+            display_name = d.name
+            outline_path = d / "data" / "outline.json"
+            if outline_path.exists():
+                try:
+                    with open(outline_path, "r", encoding="utf-8") as f:
+                        outline = json.load(f)
+                    title = outline.get("meta", {}).get("title", "") or outline.get("title", "")
+                    if title:
+                        display_name = title
+                except Exception:
+                    pass
             projects.append({
                 "name": d.name,
+                "display_name": display_name,
                 "type": cfg.get("type", "未知"),
                 "style": cfg.get("style", "未知"),
                 "chapters": cfg.get("chapters_written", 0),

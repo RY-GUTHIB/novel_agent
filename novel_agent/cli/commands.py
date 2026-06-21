@@ -180,7 +180,7 @@ def init_services(ctx: config.ProjectContext = None):
     )
 
 
-def generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept, ctx=None):
+def generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept, ctx=None, gui_mode=False):
     print("\n🤖 正在调用 LLM 生成大纲，请稍候（约1-2分钟）...")
     ctx = ctx or config.get_project_context()
     planner = PlannerAgent(memory, continuity, foreshadow, ctx=ctx)
@@ -209,7 +209,7 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
         title = outline.get("meta", {}).get("title", outline.get("title", project_name))
         update_project_progress(project_name, outline=outline, chapters_written=0)
 
-        if title != project_name:
+        if title != project_name and not gui_mode:
             print(f"\n💡 LLM 建议标题：「{title}」，当前项目名：「{project_name}」")
             try:
                 rename = input("   要把项目名改为 LLM 建议的标题吗？(y/N)：").strip().lower()
@@ -354,13 +354,11 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=None, chapt
                                         time_tag=time_tag, location=location, characters=characters,
                                         logic_constraints=logic_constraints)
 
-        # 审校循环
+        # 审校循环（finalize_chapter 会在循环结束后自动保存章节文件）
         content, settings_json = writer.review_loop(reviewer, chapter=chapter, title=title, content=content,
-                                                      summary=summary, time_tag=time_tag, location=location,
-                                                      characters=characters, settings_json=settings_json,
-                                                      logic_constraints=logic_constraints)
-        # 审校结束后写最终版到磁盘（循环内不再写中间版本）
-        writer.save_chapter(chapter, title, content)
+                                                       summary=summary, time_tag=time_tag, location=location,
+                                                       characters=characters, settings_json=settings_json,
+                                                       logic_constraints=logic_constraints)
 
         update_project_progress(project_name, chapters_written=chapter)
         rebuild_novel_md(ctx.output_dir)
@@ -448,7 +446,7 @@ def cmd_viz(memory, continuity, foreshadow, rag, project_name, ctx=None):
     ctx = ctx or config.get_project_context()
     print("\n=== 生成可视化 ===")
     try:
-        results = generate_all_visualizations(memory, continuity, project_name=project_name)
+        results = generate_all_visualizations(memory, continuity, ctx.output_dir, project_name=project_name)
         print("✅ 可视化生成完成！")
         for name, path in results.items():
             print(f"  {name}：{path}")
@@ -695,7 +693,7 @@ def update_project_memory(project_name: str, memory: MemoryManager,
     content = mem_path.read_text(encoding="utf-8")
 
     # 更新小说标题
-    novel_title = _get_novel_title(data_dir=out_dir.parent / "data")
+    novel_title = _get_novel_title(data_dir=Path(output_dir).parent / "data")
     if novel_title:
         content = re.sub(
             r"^# MEMORY\.md - 《.+》",

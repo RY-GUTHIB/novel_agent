@@ -9,6 +9,7 @@ continuity.py - 时间线 + 空间线守卫（防崩坏）
 """
 
 import re
+from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List
 from .models import TimelineEvent, CharacterLocation, LocationProfile
@@ -47,7 +48,6 @@ class ContinuityGuard(JsonRepositoryMixin):
     # ========== 时间线 ==========
 
     def save_timeline(self):
-        from dataclasses import asdict
         self._save_json("timeline.json", [asdict(e) for e in self.timeline])
 
     def _load_timeline(self):
@@ -108,7 +108,6 @@ class ContinuityGuard(JsonRepositoryMixin):
     # ========== 空间 ==========
 
     def save_spacemap(self):
-        from dataclasses import asdict
         self._save_json("spacemap.json", {k: asdict(v) for k, v in self.spacemap.items()})
 
     def _load_spacemap(self):
@@ -124,7 +123,6 @@ class ContinuityGuard(JsonRepositoryMixin):
     # ========== 人物位置 ==========
 
     def save_character_locations(self):
-        from dataclasses import asdict
         self._save_json("character_locations.json", [asdict(cl) for cl in self.character_locations])
 
     def _load_character_locations(self):
@@ -200,7 +198,9 @@ class ContinuityGuard(JsonRepositoryMixin):
                 lines.append(f"  第{e.chapter}章 [{e.time_tag}]：{e.event}（涉及：{', '.join(e.characters)}）")
 
         # C方案：已完成关键事件列表（防止重复情节）
-        all_events = [e for e in self.timeline if e.chapter < chapter]
+        # 只保留最近20章的关键事件，更早的事件由RAG补充检索
+        min_chapter = max(1, chapter - 20)
+        all_events = [e for e in self.timeline if min_chapter <= e.chapter < chapter]
         if all_events:
             # 按重要性取 top 20 条
             key_events = sorted(all_events, key=lambda x: -x.importance)[:20]

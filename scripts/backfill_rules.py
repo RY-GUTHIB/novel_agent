@@ -2,9 +2,13 @@
 backfill_rules.py - 补录 Ch1-20 的剧情规则到 plot_rules.json
 """
 import json
+import sys
 from pathlib import Path
 
-DATA_DIR = Path("projects/苍穹独狼/data")
+import config
+
+project_name = sys.argv[1] if len(sys.argv) > 1 else "苍穹独狼"
+DATA_DIR = config.PROJECTS_ROOT / project_name / "data"
 
 rules = [
     {

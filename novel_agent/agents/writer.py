@@ -14,9 +14,10 @@ import config
 from pathlib import Path
 from typing import List
 
-from novel_agent.llm.client import generate, parse_json, parse_json_array
+from novel_agent.llm.client import generate, generate_stream, parse_json, parse_json_array
 from novel_agent.core.models import (
     validate_settings_json, generate_settings_json_example,
+    TaskProfile,
 )
 from novel_agent.core.memory import MemoryManager
 from novel_agent.core.continuity import ContinuityGuard
@@ -61,8 +62,11 @@ class WriterAgent:
     def write_chapter(self, chapter: int, title: str, summary: str,
                        time_tag: str, location: str, characters: List[str],
                        temperature: float = None,
-                       logic_constraints: str = "") -> tuple:
-        """返回 (content, settings_json) 以便审校通过后调用 finalize_chapter 回写设定"""
+                       logic_constraints: str = "",
+                       on_token: callable = None) -> tuple:
+        """返回 (content, settings_json) 以便审校通过后调用 finalize_chapter 回写设定
+        on_token: 可选回调，每收到一段文本时调用 on_token(text) 用于流式显示
+        """
         if temperature is None:
             temperature = config.TEMPERATURE
         # 1. 冲突检测 + 预检
@@ -84,12 +88,39 @@ class WriterAgent:
             logic_constraints=logic_constraints,
         )
 
-        # 3. 调用 LLM（一次调用同时生成正文 + 设定 JSON）
-        raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
-                              temperature=temperature, max_tokens=config.MAX_TOKENS)
+        print(f"  [Prompt] system={len(system_prompt)}字, user={len(user_prompt)}字, 总计={len(system_prompt)+len(user_prompt)}字")
+
+        # 3. 调用 LLM（流式 or 非流式）
+        if on_token:
+            chunks = []
+            for token in generate_stream(system_prompt=system_prompt, user_prompt=user_prompt,
+                                          temperature=temperature, max_tokens=config.MAX_TOKENS):
+                chunks.append(token)
+                on_token(token)
+            raw_output = "".join(chunks)
+        else:
+            raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
+                                  temperature=temperature, max_tokens=config.MAX_TOKENS)
 
         # 4. 解析：分离正文和设定 JSON
         content, settings_json = self._split_output_and_settings(raw_output)
+
+        # DEBUG: 打印原始返回内容（便于排查 LLM 返回过短问题）
+        logger.debug("LLM raw_output (前500字): %s", raw_output[:500] if raw_output else "(空)")
+        logger.debug("解析后 content 长度: %d", len(content) if content else 0)
+
+        if not content or len(content.strip()) < 50:
+            logger.warning("LLM 返回内容过短，原始内容前200字: %s", raw_output[:200] if raw_output else "(空)")
+            raise RuntimeError(f"LLM 返回内容过短（{len(content) if content else 0} 字），请重试")
+
+        # 补充提取：有正文但无 settings_json
+        if content and len(content.strip()) >= 50 and settings_json is None:
+            print("  [WARN] LLM 未输出 SETTINGS_JSON，尝试补充提取...")
+            settings_json = self._supplementary_extract_settings(content, chapter, title, characters)
+            if settings_json:
+                print(f"  [补充提取] 成功提取设定")
+            else:
+                print(f"  [补充提取] 提取失败，设定将缺失")
 
         return content, settings_json
 
@@ -113,6 +144,15 @@ class WriterAgent:
                               temperature=temperature, max_tokens=config.MAX_TOKENS)
 
         content, settings_json = self._split_output_and_settings(raw_output)
+
+        # 补充提取：有正文但无 settings_json
+        if content and len(content.strip()) >= 50 and settings_json is None:
+            print("  [WARN] LLM 未输出 SETTINGS_JSON，尝试补充提取...")
+            settings_json = self._supplementary_extract_settings(content, chapter, title, characters)
+            if settings_json:
+                print(f"  [补充提取] 成功提取设定")
+            else:
+                print(f"  [补充提取] 提取失败，设定将缺失")
 
         return content, settings_json
 
@@ -231,6 +271,8 @@ class WriterAgent:
             character_prompts=character_prompts or "（无）",
             world_settings=self.memory.get_world_settings_prompt(),
             sect_factions=self.memory.get_sect_factions_prompt(),
+            scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
+            outline_context=self.memory.get_outline_context_prompt(chapter),
             foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
             rag_context=rag_context,
             state_snapshot=state_snapshot,
@@ -254,6 +296,10 @@ class WriterAgent:
         for t in tasks:
             status_icon = "✅" if t.status == "completed" else "🔄" if t.status == "active" else "⏳"
             lines.append(f"- {status_icon} {t.id}：{t.name}（{t.status}，进度：{t.progress}）")
+            if t.related_characters:
+                lines.append(f"  - 涉及人物：{', '.join(t.related_characters)}")
+            if t.related_items:
+                lines.append(f"  - 涉及物品：{', '.join(t.related_items)}")
         return "\n".join(lines)
 
     def _get_prev_chapter_ending(self, chapter: int) -> str:
@@ -271,7 +317,7 @@ class WriterAgent:
             return f"（上一章结尾：...{ending.strip()}）"
         return "（上一章文件不存在）"
 
-    def _get_prev_chapters_content(self, chapter: int, max_chapters: int = 3, max_chars_per: int = 3000) -> str:
+    def _get_prev_chapters_content(self, chapter: int, max_chapters: int = 2, max_chars_per: int = 2400) -> str:
         """读取前 N 章内容，用于写作参考（过渡自然 + 防上下文冲突）"""
         if chapter <= 1:
             return "（这是第一章，无前章内容）"
@@ -401,11 +447,14 @@ class WriterAgent:
             character_prompts=character_prompts or "（无）",
             world_settings=self.memory.get_world_settings_prompt(),
             sect_factions=self.memory.get_sect_factions_prompt(),
+            scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
+            outline_context=self.memory.get_outline_context_prompt(chapter),
             state_snapshot=state_snapshot,
         )
 
     def _get_rag_context(self, chapter, title, summary, characters) -> str:
         if not self.rag:
+            logger.debug("RAG 未配置，跳过检索")
             return "（无相关前文片段）"
         try:
             # B方案：多维度检索，确保覆盖物品传递、关键对话等细节
@@ -433,27 +482,37 @@ class WriterAgent:
                     seen.add(doc_key)
                     unique_results.append(r)
 
+            logger.debug("RAG 注入日志: 第%d章, 标题=%s, 检索到 %d 条去重结果",
+                         chapter, title, len(unique_results))
+
             if unique_results:
                 parts = []
                 for r in unique_results[:8]:  # 最多8条，避免prompt过长
                     meta = r.get("metadata", {})
                     ch = meta.get("chapter", "?")
                     parts.append(f"  [第{ch}章片段] {r['document'][:300]}")
-                return "## 🔍 前文相关片段（RAG检索，请据此避免重复情节）\n" + "\n---\n".join(parts)
+                context_str = "## 🔍 前文相关片段（RAG检索，请据此避免重复情节）\n" + "\n---\n".join(parts)
+                logger.debug("RAG 注入内容 (前500字): %s", context_str[:500])
+                return context_str
         except (IOError, OSError, json.JSONDecodeError, ValueError) as e:
-            print(f"  [WARN] RAG 检索失败: {e}")
+            logger.warning("RAG 检索失败: %s", e)
         return "（无相关前文片段）"
 
     # ========== 最终回写 ==========
 
     def finalize_chapter(self, chapter: int, content: str, summary: str,
                          time_tag: str, location: str, characters: list,
-                         settings_json: str = None):
+                         title: str = "", settings_json: str = None):
         """审校通过/审校上限后的统一设定回写入口。
         所有人物/物品/地理位置/连续性/伏笔/世界设定等不可逆操作都在这里执行，
         确保错误内容不会被写入数据层。
         以后有新的设定回写需求，统一加在这个方法里。
+
+        注意：先保存章节文件到磁盘（第0步），再回写设定和事件，
+        防止中途崩溃导致时间线事件存在但章节文件丢失。
         """
+        self.save_chapter(chapter, title, content)
+
         # 0. 契约校验（最终版本校验）
         parsed = None
         if settings_json:
@@ -507,17 +566,35 @@ class WriterAgent:
                 self.memory.update_character_status(char, notes=f"第{chapter}章出现于{location}")
         self.continuity.save_all()
 
-        # 3. 伏笔提取/回收
-        new_fs = self._extract_foreshadows(content, chapter)
-        for fs_content in new_fs:
-            self.foreshadow.plant(chapter=chapter, content=fs_content, type="mystery",
-                                  related_characters=characters, importance=2)
+        # 3. 伏笔提取/回收（统一管线：正则显式 + LLM 隐式 + 融合去重）
+        explicit_fs = self._extract_foreshadows(content, chapter)
+        if config.FORESHADOW_DEEP_SCAN_INTERVAL > 0 and chapter % config.FORESHADOW_DEEP_SCAN_INTERVAL == 0:
+            implicit_fs = self._scan_implicit_foreshadows(content)
+        else:
+            implicit_fs = []
+        all_fs = self._merge_foreshadows(explicit_fs, implicit_fs, chapter)
+        fs_planted = 0
+        for fs in all_fs:
+            self.foreshadow.plant(
+                chapter=chapter, content=fs["content"],
+                type=fs.get("type", "mystery"),
+                related_characters=fs.get("related_characters", []),
+                related_items=fs.get("related_items", []),
+                planted_how=f"第{chapter}章{'显式标记' if fs.get('source') == 'explicit' else '隐式扫描'}",
+                importance=fs.get("importance", 2),
+            )
+            fs_planted += 1
         resolved_count = self.foreshadow.auto_resolve(content, chapter)
-        if resolved_count:
-            print(f"  [伏笔回收] 自动回收 {resolved_count} 个伏笔")
-        if new_fs:
-            print(f"  [伏笔提取] 提取 {len(new_fs)} 个新伏笔")
         self.foreshadow.save()
+
+        # 提取统计日志
+        task_count = 0
+        if parsed and isinstance(parsed, dict):
+            task_count = len(parsed.get("tasks", []))
+        logger.info(
+            "第%d章 提取统计：伏笔 显式 %d 条 / 隐式 %d 条 / 合计 %d 条 | 已回收 %d 个 | 任务 %d 条",
+            chapter, len(explicit_fs), len(implicit_fs), fs_planted, resolved_count, task_count,
+        )
 
         # 4. RAG 存储（审校通过后才写入向量库，防止失败章节污染检索）
         if self.rag:
@@ -528,18 +605,20 @@ class WriterAgent:
 
         # 5. 更新伏笔总览
         try:
-            self.foreshadow.export_to_markdown()
+            self.foreshadow.export_to_markdown(output_dir=self.ctx.output_dir)
         except (IOError, OSError) as e:
-            print(f"  [WARN] 伏笔总览导出失败: {e}")
+            logger.warning("伏笔总览导出失败: %s", e)
 
     def review_loop(self, reviewer, chapter, title, content, summary, time_tag, location, characters, settings_json=None, logic_constraints=""):
-        max_revisions = 3
+        max_revisions = config.MAX_REVIEW_REVISIONS
         prev_score = None
         no_improvement_count = 0
+        last_report = None
         for rev in range(max_revisions + 1):
             report = reviewer.review_chapter(chapter, title, content,
                                               logic_constraints=logic_constraints,
                                               characters=characters)
+            last_report = report
             print(f"\n📋 审校报告（第{rev+1}次）：")
             print(report["raw_text"][:2000])
             print(f"\n结论：{report['verdict']} | 总分：{report['overall_score']}")
@@ -590,40 +669,133 @@ class WriterAgent:
         self.finalize_chapter(
             chapter=chapter, content=content, summary=summary,
             time_tag=time_tag, location=location, characters=characters,
-            settings_json=settings_json,
+            title=title, settings_json=settings_json,
         )
+
+        # 审校报告解析：提取待办任务和伏笔，避免"建议后续交代"类内容丢失
+        if last_report and last_report.get("raw_text"):
+            self._extract_review_action_items(last_report["raw_text"], chapter, title)
+
         return content, settings_json
+
+    # ========== 审校报告解析 ==========
+
+    def _extract_review_action_items(self, report_text: str, chapter: int, title: str) -> dict:
+        """从审校报告中提取待办任务和伏笔，自动写入 tasks/foreshadow。
+
+        审校通过后或强制接受前调用，避免报告中'建议后续交代'类内容丢失。
+        用一次小 LLM 调用解析报告文本，提取：
+          - tasks：需要后续章节解决/交代的问题
+          - foreshadows：报告中指出的悬念/伏笔
+        """
+        system_prompt = """你是小说审校报告解析助手。从审校报告中提取两类内容：
+
+1. tasks（待办任务）：需要后续章节解决、交代或回收的内容。
+   例如：某角色身世未交代、某物品用途未说明、某承诺未履行、某伏笔未回收。
+   只有确实需要在后续章节处理的内容才提取，不要捏造。
+
+2. foreshadows（伏笔）：报告中明确指出的悬念、暗示或未解之谜。
+   例如：此处暗示某事件、留下悬念、读者会好奇XXX、需要后续揭示。
+
+输出严格 JSON，不要有其他内容。如果某类没有可提取的内容，输出空数组。"""
+
+        user_prompt = (
+            f"## 审校报告（第{chapter}章《{title}》）\n"
+            f"{report_text[:4000]}\n\n"
+            f"## 输出格式（严格 JSON，不要其他内容）\n"
+            f'{{"tasks": [{{"name": "任务名（简短）", "description": "具体描述", '
+            f'"related_characters": ["角色名"], "related_items": []}}],\n'
+            f'"foreshadows": [{{"content": "伏笔内容（简短）", "type": "mystery", '
+            f'"related_characters": ["角色名"], "importance": 2}}]}}\n\n'
+            f"只输出JSON，不要其他内容。如果没有可提取的内容，输出 "
+            f'{{"tasks": [], "foreshadows": []}}。'
+        )
+
+        try:
+            raw = generate(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.2,
+                max_tokens=2048,
+            )
+            result = parse_json(raw)
+            if not result:
+                logger.warning("审校报告解析：JSON 解析失败，跳过")
+                return {"tasks": 0, "foreshadows": 0}
+
+            task_count = 0
+            for t in result.get("tasks", []):
+                import uuid
+                task_id = f"T_{chapter:03d}_{uuid.uuid4().hex[:6]}"
+                self.memory.add_task(TaskProfile(
+                    id=task_id,
+                    name=t.get("name", "未命名任务")[:50],
+                    description=t.get("description", "")[:200],
+                    chapter_created=chapter,
+                    related_characters=t.get("related_characters", []),
+                    related_items=t.get("related_items", []),
+                ))
+                task_count += 1
+
+            fs_count = 0
+            for fs in result.get("foreshadows", []):
+                self.foreshadow.plant(
+                    chapter=chapter,
+                    content=fs.get("content", "")[:200],
+                    type=fs.get("type", "mystery"),
+                    related_characters=fs.get("related_characters", []),
+                    related_items=fs.get("related_items", []),
+                    planted_how=f"审校报告自动提取（第{chapter}章）",
+                    importance=fs.get("importance", 2),
+                )
+                fs_count += 1
+
+            if task_count or fs_count:
+                print(f"  [审校→任务/伏笔] 新增 {task_count} 个任务，{fs_count} 个伏笔")
+                self.memory.save_tasks()
+                self.foreshadow.save()
+            else:
+                print(f"  [审校→任务/伏笔] 无新增内容")
+
+            return {"tasks": task_count, "foreshadows": fs_count}
+
+        except Exception as e:
+            logger.warning(f"审校报告解析失败: {e}")
+            return {"tasks": 0, "foreshadows": 0}
 
     # ========== 输出解析 ==========
 
     def _split_output_and_settings(self, raw_output: str) -> tuple:
-        """从 LLM 输出中分离正文和设定 JSON，同时剥离 PRE_FLIGHT_CHECK 自检段"""
+        """从 LLM 输出中分离正文和设定 JSON，同时剥离 PRE_FLIGHT_CHECK 自检段。
+        LLM 输出结构：===PRE_FLIGHT_CHECK=== → 自检 → 正文 → ===SETTINGS_JSON=== → JSON
+        """
         flight_marker = "===PRE_FLIGHT_CHECK==="
         settings_marker = "===SETTINGS_JSON==="
 
-        # 正文始终在 ===PRE_FLIGHT_CHECK=== 之前（如果存在）
-        if flight_marker in raw_output:
-            content_part = raw_output.split(flight_marker, 1)[0]
-        else:
-            content_part = raw_output
+        text = raw_output
 
-        # SETTINGS_JSON 在 ===SETTINGS_JSON=== 之后（如果存在）
-        if settings_marker in raw_output:
-            _, after = raw_output.split(settings_marker, 1)
-            settings_text = after.strip()
+        # 剥离 PRE_FLIGHT_CHECK 段：取 flight_marker 之后的内容
+        if flight_marker in text:
+            _, after_flight = text.split(flight_marker, 1)
+            text = after_flight
+
+        # 从剩余文本中分离正文和 settings JSON
+        if settings_marker in text:
+            content_part, _, settings_text = text.partition(settings_marker)
+            settings_text = settings_text.strip()
             settings_text = re.sub(r'^```json\s*', '', settings_text)
             settings_text = re.sub(r'\s*```$', '', settings_text)
             settings_json = parse_json(settings_text)
             if settings_json:
-                print(f"  [合并解析] 正文 {len(content_part)} 字，设定 JSON 解析成功")
+                logger.info("正文 %d 字，设定 JSON 解析成功", len(content_part.strip()))
                 return content_part.strip(), settings_json
             else:
                 self._save_failed_settings(settings_text)
-                print(f"  [合并解析] 正文 {len(content_part)} 字，设定 JSON 解析失败，已保存原始文本到 debug_settings.txt")
+                logger.warning("正文 %d 字，设定 JSON 解析失败，已保存原始文本到 debug_settings.txt", len(content_part.strip()))
                 return content_part.strip(), None
         else:
-            print(f"  [合并解析] 未找到分隔符，正文 {len(content_part)} 字")
-            return content_part.strip(), None
+            logger.info("未找到 SETTINGS_JSON 分隔符，正文 %d 字", len(text.strip()))
+            return text.strip(), None
 
     def _save_failed_settings(self, settings_text: str):
         """保存解析失败的 SETTINGS_JSON 原始文本，方便排查问题"""
@@ -645,6 +817,52 @@ class WriterAgent:
             f.write(f"末尾50字符: {settings_text[-50:]}\n")
             f.write(f"{'='*60}\n")
 
+    # ========== 补充设定提取 ==========
+
+    def _supplementary_extract_settings(self, content: str, chapter: int,
+                                          title: str, characters: list) -> dict:
+        """正文写完但未输出 SETTINGS_JSON 时，补充提取设定"""
+        from novel_agent.agents.prompts import SETTINGS_EXTRACT_SYSTEM_PROMPT
+
+        char_summary_text = self._build_char_summary(characters)
+        existing_ws_text = ", ".join(sorted(self.memory.world_settings.keys())) if self.memory.world_settings else "（无）"
+        existing_loc_text = ", ".join(sorted(self.memory.locations.keys())) if self.memory.locations else "（无）"
+        existing_sect_text = ", ".join(sorted(self.memory.sect_factions.keys())) if self.memory.sect_factions else "（无）"
+        existing_items_text = ", ".join(sorted(self.memory.items.keys())) if self.memory.items else "（无）"
+        existing_tasks_text = self._build_existing_tasks_text()
+
+        system_prompt = SETTINGS_EXTRACT_SYSTEM_PROMPT
+        user_prompt = (
+            f"请从以下第{chapter}章《{title}》正文中，提取所有新增的标志性设定。\n\n"
+            f"出场人物：{'、'.join(characters)}\n\n"
+            f"## 已有人物（只提取本章新增变化）\n{char_summary_text}\n\n"
+            f"## 已有世界设定\n{existing_ws_text}\n\n"
+            f"## 已有地点\n{existing_loc_text}\n\n"
+            f"## 已有势力\n{existing_sect_text}\n\n"
+            f"## 已有物品\n{existing_items_text}\n\n"
+            f"## 已有任务\n{existing_tasks_text}\n\n"
+            f"## 输出格式（严格 JSON，不要其他内容）\n"
+            f"{generate_settings_json_example()}\n\n"
+            f"如果某类没有新增，该字段输出空数组。\n\n"
+            f"## 章节正文\n{content}"
+        )
+
+        try:
+            raw = generate(
+                system_prompt=system_prompt, user_prompt=user_prompt,
+                temperature=0.3, max_tokens=4096,
+            )
+            settings = parse_json(raw)
+            if settings:
+                logger.info("补充提取设定成功")
+                return settings
+            else:
+                logger.warning("补充提取设定：JSON 解析失败")
+                return None
+        except Exception as e:
+            logger.warning("补充提取设定失败: %s", e)
+            return None
+
     # ========== 伏笔提取 ==========
 
     def _extract_foreshadows(self, content: str, chapter: int) -> List[str]:
@@ -658,6 +876,58 @@ class WriterAgent:
         results.extend(_FS_EXTRACT_2.findall(content))
         results.extend(_FS_EXTRACT_3.findall(content))
         return list(set(results))
+
+    def _scan_implicit_foreshadows(self, content: str) -> List[dict]:
+        """用 LLM 扫描正文中未标记的隐式伏笔（不依赖显式 [FS: xxx] 标记）"""
+        from novel_agent.agents.prompts import FORESHADOW_SCAN_PROMPT, FORESHADOW_SCAN_SYSTEM_PROMPT
+
+        prompt = FORESHADOW_SCAN_PROMPT.format(content=content)
+        raw = self._call_llm(
+            system=FORESHADOW_SCAN_SYSTEM_PROMPT,
+            user=prompt,
+            temperature=0.1,
+            max_tokens=1000,
+        )
+        if not raw:
+            return []
+        raw = raw.strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        try:
+            result = json.loads(raw)
+            if isinstance(result, list):
+                return result
+            return []
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.warning("隐式伏笔扫描 LLM 返回非 JSON：%s", raw[:200])
+            return []
+
+    def _call_llm(self, system: str, user: str, temperature: float = 0.1, max_tokens: int = 1000):
+        """统一 LLM 调用包装，用于隐式扫描等辅助调用"""
+        try:
+            return generate(system_prompt=system, user_prompt=user,
+                            temperature=temperature, max_tokens=max_tokens)
+        except Exception as e:
+            logger.warning("LLM 辅助调用失败: %s", e)
+            return None
+
+    def _merge_foreshadows(self, explicit: List[str], implicit: List[dict], chapter: int) -> List[dict]:
+        """融合显式 + 隐式伏笔，按 content 去重"""
+        seen = set()
+        result = []
+        for fs_text in explicit:
+            normalized = re.sub(r'\s+', '', fs_text)
+            if normalized not in seen:
+                seen.add(normalized)
+                result.append({"content": fs_text, "type": "mystery", "importance": 2,
+                               "related_characters": [], "source": "explicit"})
+        for fs in implicit:
+            content = fs.get("content", "")
+            normalized = re.sub(r'\s+', '', content)
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                fs["source"] = "implicit"
+                result.append(fs)
+        return result
 
     def save_chapter(self, chapter: int, title: str, content: str, output_dir: str = None):
         out_dir = Path(output_dir or self.ctx.output_dir)

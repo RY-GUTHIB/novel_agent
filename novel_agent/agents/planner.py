@@ -88,7 +88,7 @@ class PlannerAgent:
                 outline = self._extract_json(response)
             except ValueError as e:
                 if attempt < max_retries:
-                    print(f"  [WARN] {e}，重试 ({attempt+2}/{max_retries+1})...")
+                    logger.warning("%s，重试 (%d/%d)...", e, attempt + 2, max_retries + 1)
                     continue
                 raise
 
@@ -97,7 +97,7 @@ class PlannerAgent:
                 return outline
 
             if attempt < max_retries:
-                print(f"  [WARN] JSON 解析失败，重试 ({attempt+2}/{max_retries+1})...")
+                logger.warning("JSON 解析失败，重试 (%d/%d)...", attempt + 2, max_retries + 1)
 
         raise ValueError("大纲生成失败：LLM 返回格式错误，已重试3次仍无法解析")
 
@@ -352,7 +352,7 @@ class PlannerAgent:
                         seen.add(fs.id)
                         final.append(fs)
                 self.foreshadow.foreshadows = final
-                print(f"  📌 伏笔从 {total_fs} 条精简至 {len(final)} 条（仅保留跨卷+最近2卷）")
+                logger.info("伏笔从 %d 条精简至 %d 条（仅保留跨卷+最近2卷）", total_fs, len(final))
 
     def _run_self_check(self, outline: Dict):
         """生成完成后强制自检"""
@@ -369,11 +369,11 @@ class PlannerAgent:
         issues.extend(self._check_defeat_recovery(outline, volumes))
         issues.extend(self._check_side_quests(outline))
         if issues:
-            print("  ⚠️ 大纲自检发现问题：")
+            logger.info("大纲自检发现问题：")
             for issue in issues:
-                print(f"    - {issue}")
+                logger.info("  - %s", issue)
         else:
-            print("  ✅ 大纲自检全部通过")
+            logger.info("大纲自检全部通过")
 
     def _check_chapter_count(self, volumes: list) -> list:
         """检查总章数≥50，每卷15-20章"""

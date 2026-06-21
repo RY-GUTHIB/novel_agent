@@ -15,6 +15,7 @@ from .models import (
 )
 from .file_utils import atomic_write_json, JsonRepositoryMixin
 from .managers import ItemTracker, TaskTracker, StyleManager
+import config as _cfg
 
 
 class MemoryManager(JsonRepositoryMixin):
@@ -29,6 +30,7 @@ class MemoryManager(JsonRepositoryMixin):
         self.character_knowledge: Dict[str, List[CharacterKnowledge]] = {}
         self.sect_factions: Dict[str, SectFaction] = {}
         self.scene_events: List[SceneEvent] = []
+        self.outline: dict = {}  # 大纲数据（卷/章结构）
         # 子管理器（从 MemoryManager 提取的独立领域）
         self.item_tracker = ItemTracker(data_dir)
         self.task_tracker = TaskTracker(data_dir)
@@ -49,6 +51,7 @@ class MemoryManager(JsonRepositoryMixin):
         self._load_character_knowledge()
         self._load_sect_factions()
         self._load_scene_events()
+        self._load_outline()
         # 子管理器在各自 __init__ 中已加载，无需重复
 
     def save_all(self):
@@ -211,6 +214,64 @@ class MemoryManager(JsonRepositoryMixin):
                     filtered = {k: v for k, v in item.items() if k in valid_fields}
                     self.scene_events.append(SceneEvent(**filtered))
 
+    def _load_outline(self):
+        """加载大纲（卷/章结构），用于注入写作/审校 prompt"""
+        self.outline = self._load_json("outline.json", default={})
+
+    def get_outline_context_prompt(self, chapter: int) -> str:
+        """
+        注入 N-5 到 N+25 章的大纲（N = 当前章）。
+        范围外的章节不存在时不报错，静默跳过。
+        """
+        if not self.outline:
+            return "（无大纲数据）"
+        volumes = self.outline.get("volumes", [])
+        if not volumes:
+            return "（无大纲数据）"
+
+        # 将所有卷的章节展平为有序列表
+        all_chapters: list[dict] = []
+        for vol in volumes:
+            vol_title = vol.get("title", "")
+            for ch in vol.get("chapters", []):
+                all_chapters.append({
+                    "chapter": ch.get("chapter"),
+                    "title": ch.get("title", ""),
+                    "summary": ch.get("summary", ""),
+                    "volume": vol_title,
+                })
+
+        if not all_chapters:
+            return "（大纲无章节数据）"
+
+        # 找到当前章在扁平列表中的索引
+        current_idx = -1
+        for i, ch in enumerate(all_chapters):
+            if ch["chapter"] == chapter:
+                current_idx = i
+                break
+        if current_idx == -1:
+            return "（当前章不在大纲中）"
+
+        # 截取 N-BEFORE 到 N+AFTER（含边界，数值来自 config.py）
+        start = max(0, current_idx - _cfg.OUTLINE_WINDOW_BEFORE)
+        end = min(len(all_chapters), current_idx + _cfg.OUTLINE_WINDOW_AFTER + 1)
+        window = all_chapters[start:end]
+
+        lines = ["【大纲上下文（写作时必须参考，确保不偏离整体走向）】"]
+        lines.append(f"当前位置：第{chapter}章，大纲窗口显示第{window[0]['chapter']}章 ～ 第{window[-1]['chapter']}章\n")
+
+        prev_vol = None
+        for ch in window:
+            # 卷标题变化时插入分隔
+            if ch["volume"] != prev_vol:
+                lines.append(f"—— 第{ch['volume']} ——")
+                prev_vol = ch["volume"]
+            prefix = "▶ " if ch["chapter"] == chapter else "   "
+            lines.append(f"{prefix}第{ch['chapter']}章《{ch['title']}》：{ch['summary']}")
+
+        return "\n".join(lines)
+
     def add_scene_event(self, event: SceneEvent):
         self.scene_events.append(event)
         self.save_scene_events()
@@ -218,6 +279,7 @@ class MemoryManager(JsonRepositoryMixin):
     # ========== Prompt 生成 ==========
 
     def get_character_prompt(self, name: str) -> str:
+        """返回人物详细档案（用于注入 writer prompt）"""
         if name not in self.characters:
             return ""
         c = self.characters[name]
@@ -230,6 +292,8 @@ class MemoryManager(JsonRepositoryMixin):
             f"背景：{c.background}",
             f"目标：{c.goals}",
         ]
+        if c.faction:
+            lines.append(f"所属势力：{c.faction}" + (f"（{c.faction_status}）" if c.faction_status else ""))
         if c.core_values:
             lines.append(f"核心价值观：{c.core_values}")
         if c.core_desire:
@@ -244,6 +308,12 @@ class MemoryManager(JsonRepositoryMixin):
             f"语言风格：{c.speaking_style}",
             f"能力：{', '.join(c.abilities)}",
         ])
+        if c.learned_skills:
+            skill_lines = [f"  - {s.get('skill', '')}（{s.get('level', '初学')}）" +
+                           (f"，消耗：{s.get('cost', '')}" if s.get('cost') else "") +
+                           (f"，备注：{s.get('note', '')}" if s.get('note') else "")
+                           for s in c.learned_skills]
+            lines.append("已学技能：\n" + "\n".join(skill_lines))
         if c.relationships_detail:
             lines.append("人物关系（详细）：")
             stance_map = {"friendly": "🟢友好", "neutral": "⚪中立", "hostile": "🔴敌对", "adversarial": "🟠对立"}
@@ -280,6 +350,11 @@ class MemoryManager(JsonRepositoryMixin):
         lines = ["【世界观设定】"]
         for key, s in self.world_settings.items():
             lines.append(f"- {key}：{s.value}")
+        if self.locations:
+            lines.append("\n【地点档案】")
+            for name, loc in self.locations.items():
+                desc = loc.description[:80] + "…" if len(loc.description) > 80 else loc.description
+                lines.append(f"- {name}（{loc.type}）：{desc}")
         return "\n".join(lines)
 
     def get_active_rules_prompt(self) -> str:
@@ -546,7 +621,7 @@ class MemoryManager(JsonRepositoryMixin):
         if self.items:
             for name, item in self.items.items():
                 parts.append(
-                    f"- {name}（{item.type}）：第{item.first_appeared}章由「{item.first_giver}」"
+                    f"- {name}（{item.type}）：{item.description}；第{item.first_appeared}章由「{item.first_giver}」"
                     f"给予「{item.current_holder}」，当前状态={item.status}"
                 )
                 if item.subsequent_transfers:

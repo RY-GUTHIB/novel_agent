@@ -6,6 +6,7 @@ generator.py - LLM调用封装（多后端支持）
 """
 
 import sys
+import os
 import time
 import json
 import re
@@ -45,7 +46,7 @@ except ImportError:
     pass
 
 # 不可重试的错误
-_NON_RETRYABLE_MESSAGES = ("invalid_api_key", "authentication", "permission", "401", "403")
+_NON_RETRYABLE_MESSAGES = ("invalid_api_key", "authentication", "permission", "invalid_request", "400", "401", "403", "422")
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -137,7 +138,12 @@ def _call_openai_compatible(base_url: str, api_key: str, model: str,
         max_tokens=max_tokens,
         top_p=config.TOP_P,
     )
-    return response.choices[0].message.content
+    choice = response.choices[0]
+    logger.info("LLM finish_reason=%s, prompt_tokens=%s, completion_tokens=%s",
+                choice.finish_reason,
+                getattr(response.usage, 'prompt_tokens', '?'),
+                getattr(response.usage, 'completion_tokens', '?'))
+    return choice.message.content
 
 
 def _call_gemini(system_prompt: str, user_prompt: str,
@@ -222,25 +228,72 @@ def generate(system_prompt: str, user_prompt: str,
         raise ValueError(f"不支持的 API 类型: {api_type}")
 
 
+def _save_env_key(name: str, value: str):
+    """将 API Key 写入 .env 文件并更新运行时 config"""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+    lines = []
+    found = False
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith(f"{name}="):
+                    lines.append(f"{name}={value}\n")
+                    found = True
+                else:
+                    lines.append(line)
+    if not found:
+        lines.append(f"{name}={value}\n")
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    os.environ[name] = value
+    setattr(config, name, value)
+
+
 def check_api_key():
-    """写作前全量 API Key 校验。所有 provider 的 key 检查集中于此，
-    generate() 内部不再重复校验（各 _call_* 函数在 key 为空时会自然失败）。"""
-    key_map = {
-        "deepseek": ("DEEPSEEK_API_KEY", config.DEEPSEEK_API_KEY),
-        "qwen": ("QWEN_API_KEY", config.QWEN_API_KEY),
-        "gemini": ("GEMINI_API_KEY", config.GEMINI_API_KEY),
-        "claude": ("CLAUDE_API_KEY", config.CLAUDE_API_KEY),
-        "volcengine": ("VOLCENGINE_API_KEY", config.VOLCENGINE_API_KEY),
-    }
+    """API Key 校验。缺失时交互式引导输入并自动保存到 .env"""
     provider = config.LLM_PROVIDER.lower()
-    if provider in key_map:
-        name, key = key_map[provider]
-        if not key:
-            print(f"❌ 错误：未配置 {name}")
-            print("请在 novel_agent/config.py 中设置，或设置环境变量：")
-            print(f"  set {name}=your-key-here")
-            sys.exit(1)
-    print(f"✅ 使用模型：{config.LLM_PROVIDER}")
+    key_map = {
+        "deepseek": ("DEEPSEEK_API_KEY", config.DEEPSEEK_API_KEY, config.DEEPSEEK_BASE_URL),
+        "qwen": ("QWEN_API_KEY", config.QWEN_API_KEY, config.QWEN_BASE_URL),
+        "gemini": ("GEMINI_API_KEY", config.GEMINI_API_KEY, "Google AI Studio"),
+        "claude": ("CLAUDE_API_KEY", config.CLAUDE_API_KEY, "Anthropic Console"),
+        "volcengine": ("VOLCENGINE_API_KEY", config.VOLCENGINE_API_KEY, "火山引擎方舟控制台"),
+    }
+    if provider not in key_map:
+        print(f"未知 provider: {provider}，跳过 key 检查")
+        return
+
+    name, key, source_hint = key_map[provider]
+    if key:
+        print(f"使用模型：{provider}")
+        return
+
+    print(f"\n{'='*50}")
+    print(f"  当前 provider: {provider}")
+    print(f"  未检测到 {name}")
+    print(f"{'='*50}")
+    print(f"\n请前往 {source_hint} 获取 API Key")
+    print(f"获取后粘贴到下方（输入 q 放弃）：\n")
+
+    try:
+        user_input = input(f"  {name} = ").strip()
+    except Exception:
+        print("\n输入异常，跳过配置")
+        return
+
+    if user_input.lower() in ("q", "quit", "exit", ""):
+        raise ValueError(f"未配置 {name}，操作已取消")
+
+    if len(user_input) < 10:
+        raise ValueError(f"输入的 Key 过短（{len(user_input)} 字符），请确认是否完整")
+
+    try:
+        _save_env_key(name, user_input)
+        print(f"\n  已保存到 .env 文件，后续启动将自动加载\n")
+    except Exception as e:
+        print(f"\n  保存失败：{e}")
+        print(f"  请手动在 config.py 中设置 {name}")
+    print(f"使用模型：{provider}")
 
 
 def generate_stream(system_prompt: str, user_prompt: str,

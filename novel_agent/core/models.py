@@ -277,6 +277,7 @@ def generate_settings_json_example() -> str:
                 "cultivation": "", "current_location": "", "status": "alive",
                 "core_values": "", "core_desire": "", "core_fear": "",
                 "flaw": "", "alignment": "", "notes": "",
+                "learned_skills": [], "faction": "", "faction_status": "",
                 "relationships": {},
                 "relationship_contexts": {
                     "他人": {"type": "关系类型", "stance": "friendly/neutral/hostile/adversarial",
@@ -290,7 +291,7 @@ def generate_settings_json_example() -> str:
             "updates": {
                 "type": "宗门", "description": "描述", "strength": "实力",
                 "hierarchy": [], "key_members": [], "allies": [], "enemies": [],
-                "location": "", "rules": [],
+                "location": "", "rules": [], "notes": "",
             },
         }],
         "locations": [{
@@ -325,6 +326,7 @@ def generate_settings_json_example() -> str:
             "updates": {
                 "type": "类型", "description": "描述",
                 "first_giver": "赋予者", "current_holder": "持有者", "status": "active",
+                "subsequent_transfers": [], "prohibited_actions": [], "notes": "",
             },
         }],
         "tasks": [{

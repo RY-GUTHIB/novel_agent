@@ -106,6 +106,9 @@ class TaskTracker(JsonRepositoryMixin):
         return active[:limit]
 
     def add(self, task: TaskProfile):
+        import uuid
+        while task.id in self.tasks:
+            task.id = f"{task.id}_{uuid.uuid4().hex[:4]}"
         self.tasks[task.id] = task
         self.save()
 

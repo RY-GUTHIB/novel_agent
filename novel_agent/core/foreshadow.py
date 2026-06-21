@@ -8,12 +8,15 @@ foreshadow.py - 伏笔/回调追踪
 4. 持久化到 data/foreshadow.json
 """
 
+import logging
 import re
 from pathlib import Path
 from typing import List
 from dataclasses import asdict
 from .models import Foreshadow
 from .file_utils import atomic_write_text, JsonRepositoryMixin
+
+logger = logging.getLogger(__name__)
 
 # 预编译正则
 _FS_PATTERN = re.compile(r'\[FS[：:]\s*(.*?)\s*\]')
@@ -35,7 +38,11 @@ class ForeshadowTracker(JsonRepositoryMixin):
         data = self._load_json("foreshadow.json", default=[])
         if isinstance(data, list):
             self.foreshadows = [Foreshadow(**d) for d in data]
-        if self.foreshadows:
+        # 从持久化计数器恢复，防止手动删除 JSON 条目导致 ID 重复
+        counter_data = self._load_json("foreshadow_counter.json", default=None)
+        if counter_data is not None and isinstance(counter_data, dict):
+            self._counter = counter_data.get("counter", 0)
+        elif self.foreshadows:
             nums = []
             for fs in self.foreshadows:
                 parts = fs.id.split("_")
@@ -46,6 +53,7 @@ class ForeshadowTracker(JsonRepositoryMixin):
 
     def save(self):
         self._save_json("foreshadow.json", [asdict(fs) for fs in self.foreshadows])
+        self._save_json("foreshadow_counter.json", {"counter": self._counter})
 
     def plant(self, chapter: int, content: str, type: str = "mystery",
               related_characters: List[str] = None, related_items: List[str] = None,
@@ -107,7 +115,12 @@ class ForeshadowTracker(JsonRepositoryMixin):
                 self.resolve(fs_id, chapter, f"第{chapter}章自动回收")
                 count += 1
             except ValueError:
-                pass
+                logger.warning("auto_resolve: 伏笔ID %s 不存在，可能拼写错误", fs_id)
+                matched = self._fuzzy_match_fs_id(fs_id)
+                if matched:
+                    logger.info("  模糊匹配到 %s，已自动修正", matched)
+                    self.resolve(matched, chapter, f"第{chapter}章自动回收（从 {fs_id} 修正）")
+                    count += 1
         
         if count:
             self.save()
@@ -133,14 +146,33 @@ class ForeshadowTracker(JsonRepositoryMixin):
                 candidates.append(fs)
         
         if candidates:
-            print(f"  [伏笔候选] 以下伏笔可能在本章被兑现（未自动回收，请手动确认）：")
+            logger.info("以下伏笔可能在本章被兑现（未自动回收，请手动确认）：")
             for fs in candidates:
                 chars = f" | 人物：{', '.join(fs.related_characters)}" if fs.related_characters else ""
-                print(f"    [{fs.id}] 第{fs.chapter_planted}章（重要度{fs.importance}）{chars}")
-                print(f"      内容：{fs.content[:60]}{'...' if len(fs.content) > 60 else ''}")
-            print(f"    使用 resolve-fs 命令手动回收")
+                logger.info("  [%s] 第%d章（重要度%d）%s", fs.id, fs.chapter_planted, fs.importance, chars)
+                logger.info("    内容：%s%s", fs.content[:60], "..." if len(fs.content) > 60 else "")
+            logger.info("  使用 resolve-fs 命令手动回收")
         
         return count
+
+    def _fuzzy_match_fs_id(self, target: str):
+        """在已注册的 FS ID 中找数字最接近的匹配（容差 ±3）"""
+        import re
+        m = re.search(r'FS_(\d+)', target)
+        if not m:
+            return None
+        target_num = int(m.group(1))
+        best = None
+        best_dist = 3
+        for fs in self.foreshadows:
+            m2 = re.search(r'FS_(\d+)', fs.id)
+            if m2:
+                num = int(m2.group(1))
+                dist = abs(num - target_num)
+                if dist < best_dist:
+                    best_dist = dist
+                    best = fs.id
+        return best
 
     def get_pending(self, before_chapter: int = None) -> List[Foreshadow]:
         result = [fs for fs in self.foreshadows if fs.status == "planted"]

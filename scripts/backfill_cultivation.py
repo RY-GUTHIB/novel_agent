@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 from pathlib import Path
 
-ctx = config.set_project('苍穹独狼')
+project_name = sys.argv[1] if len(sys.argv) > 1 else "苍穹独狼"
+ctx = config.set_project(project_name)
 
 from novel_agent.core.memory import MemoryManager
 from novel_agent.llm.client import generate
