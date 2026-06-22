@@ -3,11 +3,11 @@ chcp 65001 >nul 2>&1
 setlocal
 
 set "PROJECT_DIR=%~dp0"
-set "VENV_PYTHON=%PROJECT_DIR%venv\Scripts\pythonw.exe"
+set "PYTHON=C:\Users\RY\.workbuddy\binaries\python\envs\default\Scripts\pythonw.exe"
 
-if exist "%VENV_PYTHON%" (
-    start "" "%VENV_PYTHON%" "%PROJECT_DIR%gui_main.py"
+if exist "%PYTHON%" (
+    start "" "%PYTHON%" "%PROJECT_DIR%gui_main.py"
 ) else (
-    echo Python venv not found at %PROJECT_DIR%venv\Scripts\pythonw.exe
+    echo Python not found at %PYTHON%
     pause
 )

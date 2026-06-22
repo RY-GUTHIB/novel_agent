@@ -62,6 +62,7 @@ class SpacetimeGuard:
         violations.extend(self._check_season(chapter, time_tag))
         violations.extend(self._check_spatial_reachability(chapter, characters, location, time_tag))
         violations.extend(self._check_character_consistency(chapter, characters))
+        violations.extend(self._check_cross_chapter_position(chapter, characters, location))
 
         fatal_errors = []
         warnings = []
@@ -220,6 +221,28 @@ class SpacetimeGuard:
                 violations.append(SpacetimeViolation(
                     type="character", severity="warning", chapter=chapter,
                     message=f"{char_name} 已标记为「失踪」，本章如需出场必须先交代行踪。"
+                ))
+        return violations
+
+    def _check_cross_chapter_position(self, chapter: int, characters: List[str],
+                                       target_location: str) -> List[SpacetimeViolation]:
+        """
+        跨章位置检测：上章角色明确「离开」了某地，本章却在该地直接出现。
+        依赖 continuity.enhance_character_location 在 finalize 时写入的 direction。
+        """
+        violations = []
+        for char in characters:
+            prev_records = [cl for cl in self.continuity.character_locations
+                           if cl.character == char and cl.chapter == chapter - 1]
+            if not prev_records:
+                continue
+            prev_cl = prev_records[-1]
+            if prev_cl.location == target_location and prev_cl.direction == "out":
+                violations.append(SpacetimeViolation(
+                    type="space", severity="warning", chapter=chapter,
+                    message=(f"空间矛盾：{char} 在第{chapter-1}章【{prev_cl.movement_verb}】"
+                             f"「{prev_cl.location}」，已离开该地点，"
+                             f"本章不应直接从该地点出发。")
                 ))
         return violations
 

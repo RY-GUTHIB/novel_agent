@@ -88,6 +88,8 @@ class ContractValidator:
         self._check_plot_rules(content, chapter, memory_mgr, violations)
         self._check_spatial_teleport(content, chapter, characters, memory_mgr, violations)
         self._check_time_consistency(content, chapter, characters, memory_mgr, violations)
+        self._check_day_refs(content, chapter, memory_mgr, violations)
+        self._check_cultivation_mislabel(content, chapter, characters, memory_mgr, violations)
 
         if parsed_settings:
             self._check_item_consistency(parsed_settings, memory_mgr, violations)
@@ -99,6 +101,7 @@ class ContractValidator:
             self._check_season_transition(parsed_settings, continuity_guard, chapter, violations)
             self._check_task_completion(parsed_settings, memory_mgr, content, chapter, violations)
             self._check_personality_consistency(parsed_settings, memory_mgr, content, violations)
+            self._check_skill_progression(parsed_settings, memory_mgr, chapter, violations)
 
         return violations
 
@@ -705,6 +708,72 @@ class ContractValidator:
                         message=f"{char} 先有死亡/倒下描写后有苏醒/站起描写，可能存在事件顺序矛盾",
                         evidence=f"死亡词位置={death_pos}，苏醒词位置={alive_pos}",
                     ))
+
+    def _check_day_refs(self, content, chapter, mem, violations):
+        """检查正文中"昨天"引用是否与天数映射一致。"""
+        gap = mem.get_day_gap(chapter) if hasattr(mem, 'get_day_gap') else 0
+        if gap < 2:
+            return
+        # 扫描"昨天"出现位置（跳过对话引号内的）
+        for m in re.finditer(r'昨天', content):
+            violations.append(ContractViolation(
+                severity="高", category="时间",
+                message=f"第{chapter}章距上章已过{gap}天，但正文出现「昨天」（可能引用上章事件，应使用"
+                        f"{'「前天」' if gap == 2 else f'「{gap}天前」'}），见第{content[:m.start()].count(chr(10))+1}行",
+            ))
+            break  # 一次违反足够
+
+    def _check_skill_progression(self, parsed_settings: dict, mem, chapter: int, violations: List):
+        """技能进度校验：同技能 progress 只增不降"""
+        for item in parsed_settings.get("characters", []):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name", "").strip()
+            updates = item.get("updates", {})
+            if not name or name not in mem.characters:
+                continue
+            char = mem.characters[name]
+            for skill_data in updates.get("learned_skills", []):
+                if not isinstance(skill_data, dict):
+                    continue
+                skill_name = skill_data.get("skill", "")
+                if not skill_name:
+                    continue
+                existing = next((s for s in char.learned_skills if s.get("skill") == skill_name), None)
+                if not existing:
+                    continue
+                new_progress = skill_data.get("progress", 0.0)
+                old_progress = existing.get("progress", 0.0)
+                if isinstance(new_progress, (int, float)) and isinstance(old_progress, (int, float)):
+                    if new_progress < old_progress:
+                        violations.append(ContractViolation(
+                            severity="高", category="状态",
+                            message=f"{name}.{skill_name} 技能进度倒退: {old_progress:.2f}→{new_progress:.2f} (第{chapter}章)",
+                        ))
+
+    def _check_cultivation_mislabel(self, content, chapter, characters, mem, violations):
+        """检查正文中是否有角色被错误地称为低于其实际修为。"""
+        layer_map = {"一层":1,"二层":2,"三层":3,"四层":4,"五层":5,"六层":6,"七层":7,"八层":8,"九层":9}
+        for name in characters:
+            if name not in mem.characters:
+                continue
+            char = mem.characters[name]
+            if not char.cultivation:
+                continue
+            actual = next((v for k,v in layer_map.items() if k in char.cultivation), None)
+            if actual is None:
+                continue
+            for keyword, wrong_layer in layer_map.items():
+                if wrong_layer >= actual:
+                    continue
+                pattern = rf'(?:{re.escape(name)}).{{0,30}}{keyword}|{keyword}.{{0,30}}(?:{re.escape(name)})'
+                if re.search(pattern, content):
+                    violations.append(ContractViolation(
+                        severity="高", category="状态",
+                        message=f"正文中 {name} 附近出现「{keyword}」，但其实际修为为「{char.cultivation}」，"
+                                f"低层修为称呼与档案不符",
+                    ))
+                    break
 
 
 def format_violations_report(violations: List[ContractViolation]) -> str:

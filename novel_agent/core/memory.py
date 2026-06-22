@@ -6,6 +6,7 @@ memory.py - 世界观/人物档案管理
 """
 
 import dataclasses
+import re
 from pathlib import Path
 from typing import Dict, List, Optional
 from .models import (
@@ -13,7 +14,7 @@ from .models import (
     PlotRule, CharacterKnowledge, SectFaction, SceneEvent,
     ItemProfile, StyleProfile, TaskProfile,
 )
-from .file_utils import atomic_write_json, JsonRepositoryMixin
+from .file_utils import atomic_write_json, JsonRepositoryMixin, parse_chinese_number
 from .managers import ItemTracker, TaskTracker, StyleManager
 import config as _cfg
 
@@ -39,10 +40,12 @@ class MemoryManager(JsonRepositoryMixin):
         self.items = self.item_tracker.items
         self.tasks = self.task_tracker.tasks
         self.style = self.style_manager.style
+        self.correction_history: List[dict] = []
+        self._chapter_days: Dict[int, int] = {}
         self._load_all()
-
+ 
     # ========== 加载/保存 ==========
-
+ 
     def _load_all(self):
         self._load_characters()
         self._load_locations()
@@ -52,8 +55,9 @@ class MemoryManager(JsonRepositoryMixin):
         self._load_sect_factions()
         self._load_scene_events()
         self._load_outline()
+        self._load_correction_history()
         # 子管理器在各自 __init__ 中已加载，无需重复
-
+ 
     def save_all(self):
         self.save_characters()
         self.save_locations()
@@ -65,6 +69,7 @@ class MemoryManager(JsonRepositoryMixin):
         self.item_tracker.save()
         self.style_manager.save()
         self.task_tracker.save()
+        self._save_correction_history()
 
     # ========== 人物 ==========
 
@@ -214,9 +219,48 @@ class MemoryManager(JsonRepositoryMixin):
                     filtered = {k: v for k, v in item.items() if k in valid_fields}
                     self.scene_events.append(SceneEvent(**filtered))
 
+    # 提取 "第N天" 的正则，支持阿拉伯和中文数字
+    _CHAPTER_DAY_RE = re.compile(r'第\s*([\d零一二三四五六七八九十百千]+)\s*天')
+
     def _load_outline(self):
         """加载大纲（卷/章结构），用于注入写作/审校 prompt"""
         self.outline = self._load_json("outline.json", default={})
+        self._rebuild_chapter_days()
+
+    def _rebuild_chapter_days(self, outline: dict = None):
+        """从 outline 重建 {章节号: 绝对天数} 映射。
+        支持子重置（如"炼气三层·第1天" < 上一章天数时自动累加）。
+        """
+        self._chapter_days = {}
+        source = outline if outline is not None else self.outline
+        volumes = source.get("volumes", [])
+        all_chapters = []
+        for vol in volumes:
+            all_chapters.extend(vol.get("chapters", []))
+        if not all_chapters:
+            all_chapters = source.get("chapter_plan", [])
+
+        prev_day = 0
+        for ch_data in all_chapters:
+            ch = ch_data.get("chapter", 0)
+            time_tag = ch_data.get("time", f"第{ch}章")
+            m = self._CHAPTER_DAY_RE.search(time_tag)
+            if m:
+                raw = parse_chinese_number(m.group(1))
+                if raw and raw > prev_day:
+                    self._chapter_days[ch] = raw
+                    prev_day = raw
+                elif raw and raw <= prev_day:
+                    # 子重置（如新境界"第1天"），在上章基础上累加
+                    self._chapter_days[ch] = prev_day + 1
+                    prev_day = prev_day + 1
+                # raw=0 或解析失败则跳过
+
+    def get_day_gap(self, chapter: int) -> int:
+        """返回距上一章的天数差。无数据返回 0。"""
+        if chapter > 1 and chapter in self._chapter_days and (chapter - 1) in self._chapter_days:
+            return self._chapter_days[chapter] - self._chapter_days[chapter - 1]
+        return 0
 
     def get_outline_context_prompt(self, chapter: int) -> str:
         """
@@ -311,7 +355,9 @@ class MemoryManager(JsonRepositoryMixin):
         if c.learned_skills:
             skill_lines = [f"  - {s.get('skill', '')}（{s.get('level', '初学')}）" +
                            (f"，消耗：{s.get('cost', '')}" if s.get('cost') else "") +
-                           (f"，备注：{s.get('note', '')}" if s.get('note') else "")
+                           (f"，备注：{s.get('note', '')}" if s.get('note') else "") +
+                           (f"，进度：{s.get('progress', 0)*100:.0f}%" if s.get('progress') else "") +
+                           (f"，习得：第{s['chapter_learned']}章" if s.get('chapter_learned') else "")
                            for s in c.learned_skills]
             lines.append("已学技能：\n" + "\n".join(skill_lines))
         if c.relationships_detail:
@@ -495,7 +541,20 @@ class MemoryManager(JsonRepositoryMixin):
                 lines.append(f"     → {char_name} 的对话风格必须与以上一致。")
             if c.cultivation:
                 lines.append(f"  🔒 修为锁定：{c.cultivation}")
-                lines.append(f"     → 不得低于或远超此修为（除非本章明确描写突破/受伤降级）。")
+                lines.append(f"  → 不得低于或远超此修为（除非本章明确描写突破/受伤降级）。")
+                lines.append(f"  → 其他角色提及 {char_name} 修为时也必须使用「{c.cultivation}」，"
+                             f"除非描写了隐藏气息/易容等刻意隐瞒行为。")
+            # 技能进度约束
+            if c.learned_skills:
+                for s in c.learned_skills:
+                    sk = s.get("skill", "")
+                    prog = s.get("progress", 0)
+                    ch_lrn = s.get("chapter_learned", 0)
+                    ch_upd = s.get("last_updated_chapter", ch_lrn)
+                    pct = f"{prog*100:.0f}%" if isinstance(prog, (int, float)) and prog > 0 else ""
+                    if sk:
+                        lines.append(f"  🔒 技能锁定：{sk}（进度{' ' + pct if pct else '未知'}，第{ch_lrn}章习得，最新更新第{ch_upd}章）")
+                        lines.append(f"     → {sk} 的技能进度/等级只能提升不能倒退。")
             if c.current_location:
                 lines.append(f"  📍 上一章末位置：{c.current_location}")
                 lines.append(f"     → 如果本章 {char_name} 出现在其他地点，必须描写移动过程（交通方式/耗时）。")
@@ -534,6 +593,36 @@ class MemoryManager(JsonRepositoryMixin):
                 lines.append(f"  ⚖️ IF「{r.condition}」→ THEN「{r.consequence}」{source}")
             lines.append(f"  ⚠️ 以上规则已在正文中明确声明。违反任何一条都是剧情 Bug。")
 
+        lines.append(f"\n  ═══ 时间跨度约束 ═══")
+        gap = self.get_day_gap(chapter)
+        cur_day = self._chapter_days.get(chapter, 0)
+        if gap >= 2:
+            time_word = "前天" if gap == 2 else f"{gap}天前"
+            lines.append(f"  ⏱️ 距第{chapter-1}章已过 {gap} 天")
+            lines.append(f"     → 引用第{chapter-1}章事件时，应使用「{time_word}」，不得使用「昨天」。")
+            if cur_day:
+                lines.append(f"  📅 当前是故事第 {cur_day} 天")
+        elif gap == 1 and cur_day:
+            lines.append(f"  📅 当前是故事第 {cur_day} 天（距上章1天，正常）")
+        elif cur_day:
+            lines.append(f"  📅 当前是故事第 {cur_day} 天（距上章无间隔，同一天事件）")
+        else:
+            lines.append(f"  （无天数数据）")
+
+        anchor_re = re.compile(r'(?:' + r'\d+' + r'|' + '[零一二三四五六七八九十百千]+' + r')[年月天]前')
+        anchors = []
+        for key, ws in self.world_settings.items():
+            if anchor_re.search(ws.value):
+                anchors.append(f"  📅 {key}：{ws.value[:60]}")
+        for char_name, char in self.characters.items():
+            if char.background and anchor_re.search(char.background) and char_name in characters:
+                anchors.append(f"  📅 {char_name}背景：{char.background[:60]}")
+        if anchors:
+            lines.append(f"\n  ═══ 叙事时间锚点（角色对话引用时必须使用正确时间描述） ═══")
+            for a in anchors:
+                lines.append(a)
+            lines.append(f"  ⚠️ 以上事件在设定中有明确时间锚点。角色对话提及时应使用对应「X年前」时间词，不得写作「最近」「刚」「前些日子」等模糊描述。")
+
         lines.append(f"\n  ═══ 出场人物关系网 ═══")
         has_rel = False
         for i, a in enumerate(characters):
@@ -549,6 +638,35 @@ class MemoryManager(JsonRepositoryMixin):
                         lines.append(f"  🔗 {a} ↔ {b}：{rel_type}（{stance_tag}）")
         if not has_rel:
             lines.append(f"  （出场人物之间暂无已记录的关系）")
+
+        # 未出场角色位置追踪
+        absent_with_location = []
+        for name, char in self.characters.items():
+            if (name not in characters and char.current_location
+                    and char.status != "dead" and char.first_appeared <= chapter):
+                absent_with_location.append(f"  → {name}：{char.current_location}（第{char.first_appeared}章出场）")
+        if absent_with_location:
+            lines.append(f"\n  ═══ 未出场角色的空间位置（跨章追踪） ═══")
+            for a in absent_with_location:
+                lines.append(a)
+            lines.append(f"  ⚠️ 以上角色不出场本章，但位置已存在于世界中。如果本章角色提及他们（回忆/传音/他人转述），"
+                         f"空间位置必须与最后已知位置自洽，不得无理由出现在本章场景中。")
+
+        # 活跃任务（未完成的支线 / 承诺）
+        active_tasks = self.get_active_tasks(current_chapter=chapter)
+        if active_tasks:
+            has_content = True
+            lines.append(f"\n  ═══ 活跃任务（未完成的支线/承诺） ═══")
+            for t in active_tasks:
+                related = []
+                if t.related_characters:
+                    related.append(f"涉及人物：{', '.join(t.related_characters)}")
+                if t.related_items:
+                    related.append(f"涉及物品：{', '.join(t.related_items)}")
+                tag = f"（{'；'.join(related)}）" if related else ""
+                lines.append(f"  📋 {t.name}【{t.status}】{tag}")
+                lines.append(f"     → {t.description}")
+            lines.append(f"  ⚠️ 如果角色对话提及以上任务的时间期限/条件，必须与任务描述一致，不得自相矛盾。")
 
         if not has_content:
             return "（无特殊一致性约束）"
@@ -614,6 +732,16 @@ class MemoryManager(JsonRepositoryMixin):
                     fields.append(f"关系身份={', '.join(id_tags)}")
             if c.status and c.status != "alive":
                 fields.append(f"状态={c.status}")
+            # 技能进度
+            if c.learned_skills:
+                skill_strs = []
+                for s in c.learned_skills:
+                    pct = f"{s.get('progress', 0)*100:.0f}%" if s.get('progress') else ""
+                    ch = f"第{s['last_updated_chapter']}章" if s.get('last_updated_chapter') else ""
+                    tag = f"({pct}{'/' + ch if ch else ''})" if pct or ch else ""
+                    skill_strs.append(f"{s.get('skill', '')}{tag}")
+                if skill_strs:
+                    fields.append(f"技能={', '.join(skill_strs)}")
             parts.append("，".join(fields))
 
         # 2. 物品归属（含后续转移记录和禁止操作）
@@ -773,5 +901,38 @@ class MemoryManager(JsonRepositoryMixin):
         if len(char.relationships) >= 3:
             score += 1
         return min(max(score, 1), 5)
+
+    # ========== 修正历史（correction_history）==========
+
+    def _load_correction_history(self):
+        self.correction_history = self._load_json("correction_history.json", default=[])
+
+    def _save_correction_history(self):
+        self._save_json("correction_history.json", self.correction_history)
+
+    def add_correction(self, chapter: int, issue_type: str, issue: str, fix: str, source: str = "manual"):
+        from datetime import date
+        entry = {
+            "id": f"CH_{len(self.correction_history) + 1:03d}",
+            "chapter": chapter,
+            "type": issue_type,
+            "issue": issue,
+            "fix": fix,
+            "source": source,
+            "timestamp": str(date.today()),
+        }
+        self.correction_history.append(entry)
+        self._save_correction_history()
+        return entry["id"]
+
+    def get_correction_history_prompt(self, chapter: int, limit: int = 5) -> str:
+        recent = [c for c in self.correction_history if c["chapter"] < chapter][-limit:]
+        if not recent:
+            return "（无历史修正记录）"
+        lines = ["## ⚠️ 历史修正记录（阅读以避免重复错误）"]
+        for c in recent:
+            lines.append(f"- 第{c['chapter']}章 【{c['type']}】{c['issue']}")
+            lines.append(f"  → {c['fix']}")
+        return "\n".join(lines)
 
 

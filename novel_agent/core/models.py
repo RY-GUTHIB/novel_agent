@@ -48,7 +48,7 @@ class CharacterProfile:
     first_appeared: int = 1
     arc: str = ""
     notes: str = ""
-    learned_skills: List[dict] = field(default_factory=list)  # 技能记录: [{skill, source, level, cost, note}]
+    learned_skills: List[dict] = field(default_factory=list)  # 技能记录: [{skill, source, level, cost, note, progress, chapter_learned, last_updated_chapter}]
     faction: str = ""  # 所属势力
     faction_status: str = ""  # 势力身份（如"白银骑士""流放者"）
 
@@ -169,6 +169,8 @@ class CharacterLocation:
     location: str
     scene: str = ""
     note: str = ""
+    movement_verb: str = ""     # 移动动词原文，如"走出""回到"
+    direction: str = ""         # "in"=到达 "out"=离开 "stay"=未移动
 
 @dataclass
 class TaskProfile:
@@ -232,6 +234,7 @@ class CharacterUpdate:
         "cultivation": "", "current_location": "", "status": "alive",
         "core_values": "", "core_desire": "", "core_fear": "", "flaw": "",
         "alignment": "", "notes": "",
+        "learned_skills": [],
         "relationships": {},
         "relationship_contexts": {},
     })
@@ -278,7 +281,10 @@ def generate_settings_json_example() -> str:
                 "cultivation": "", "current_location": "", "status": "alive",
                 "core_values": "", "core_desire": "", "core_fear": "",
                 "flaw": "", "alignment": "", "notes": "",
-                "learned_skills": [], "faction": "", "faction_status": "",
+                "learned_skills": [{"skill": "功法名", "source": "来源",
+                                     "level": "初学/小成/大成/圆满", "cost": "消耗",
+                                     "note": "备注", "progress": 0.3,
+                                     "chapter_learned": 1, "last_updated_chapter": 2}], "faction": "", "faction_status": "",
                 "relationships": {},
                 "relationship_contexts": {
                     "他人": {"type": "关系类型", "stance": "friendly/neutral/hostile/adversarial",

@@ -112,7 +112,8 @@ class WriterAgent:
         logger.debug("LLM raw_output (前500字): %s", raw_output[:500] if raw_output else "(空)")
         logger.debug("解析后 content 长度: %d", len(content) if content else 0)
 
-        if not content or len(content.strip()) < 50:
+        min_words = int(config.CHAPTER_WORD_TARGET * 0.5)
+        if not content or len(content.strip()) < min_words:
             logger.warning("LLM 返回内容过短，原始内容前200字: %s", raw_output[:200] if raw_output else "(空)")
             raise RuntimeError(f"LLM 返回内容过短（{len(content) if content else 0} 字），请重试")
 
@@ -270,6 +271,7 @@ class WriterAgent:
             spacemap_prompt=self.continuity.get_spacemap_prompt(),
             outline_context=self.memory.get_outline_context_prompt(chapter),
             foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
+            correction_history=self.memory.get_correction_history_prompt(chapter),
             rag_context=rag_context,
             state_snapshot=state_snapshot,
             rhythm=self._get_rhythm_for_chapter(chapter),
@@ -410,6 +412,7 @@ class WriterAgent:
                 f"核心缺陷={c.flaw}" if c.flaw else "",
                 f"阵营={c.alignment}" if c.alignment else "",
                 f"能力[{abilities_str}]",
+                f"技能[{', '.join(s.get('skill', '') + ('(' + str(int(s.get('progress', 0)*100)) + '%)' if s.get('progress') else '') for s in c.learned_skills)}]",
                 f"关系[{rels_str}]",
                 f"状态={c.status}",
             ]
@@ -445,20 +448,61 @@ class WriterAgent:
         "紧张(冲突升级) → 缓一口气 → 更紧张 → 以为结束了 → 最紧张 → 结束+钩子（过山车模式）",
         "线索A → 推理1 → 发现不对劲 → 线索B推翻推理1 → 新推理 → 更大秘密浮现（悬疑递进模式）",
         "低压(日常) → 冲突初现 → 压力增大 → 转折爆发 → 章末钩子（起承转爽模式）",
+        "低压(日常) → 暗流(情感积累) → 冲突(爆发) → 释然/决裂 → 余韵（情感曲线模式）",
     ]
 
+    def _get_chapter_meta(self, chapter: int) -> dict:
+        """从 outline 获取本章元数据，含 summary。"""
+        outline = self.memory.outline or {}
+        volumes = outline.get("volumes", [])
+        all_chapters = []
+        for vol in volumes:
+            all_chapters.extend(vol.get("chapters", vol.get("chapter_plan", [])))
+        if not all_chapters:
+            all_chapters = outline.get("chapter_plan", [])
+        return next((c for c in all_chapters if c.get("chapter") == chapter), {})
+
     def _get_rhythm_for_chapter(self, chapter: int) -> str:
-        """根据章节号选择情绪曲线模式"""
+        """根据大纲内容推断节奏，回退轮询"""
+        summary = self._get_chapter_meta(chapter).get("summary", "") or ""
+        if "突破" in summary or "觉醒" in summary or "连跳" in summary:
+            return "铺垫(困境) → 积累 → 突破(爆发) → 释放(震惊/余韵)"
+        if "战斗" in summary or "妖兽" in summary or "追杀" in summary or "冲突" in summary:
+            return "紧张(升级) → 缓一口气 → 更紧张 → 以为结束了 → 最紧张 → 结束+钩子（过山车模式）"
+        if "秘密" in summary or "真相" in summary or "发现" in summary or "调查" in summary:
+            return "线索A → 推理1 → 发现不对劲 → 线索B推翻推理1 → 新推理 → 更大秘密浮现（悬疑递进模式）"
+        if "感情" in summary or "表白" in summary or "和解" in summary or "决裂" in summary or "关心" in summary:
+            return "低压(日常) → 暗流(情感积累) → 冲突(爆发) → 释然/决裂 → 余韵（情感曲线模式）"
         idx = (chapter - 1) % len(self._RHYTHM_PATTERNS)
         return self._RHYTHM_PATTERNS[idx]
 
     def _get_beat_type_for_chapter(self, chapter: int) -> str:
-        """根据章节号选择本章爽点类型"""
+        """根据大纲内容推断爽点，回退轮询"""
+        summary = self._get_chapter_meta(chapter).get("summary", "") or ""
+        if "打脸" in summary or "碾压" in summary or "震惊" in summary or "教训" in summary:
+            return "打脸时刻（铺垫反差→反派嘲讽→主角碾压→围观震惊）"
+        if "突破" in summary or "提升" in summary or "觉醒" in summary or "解封" in summary:
+            return "突破时刻（主角修为突破，引发天地异象/众人瞩目）"
+        if "身份" in summary or "身世" in summary or "隐藏" in summary:
+            return "身份反转（主角隐藏身份被揭露/更高身份暴露）"
+        if "收获" in summary or "得到" in summary or "机缘" in summary:
+            return "收获时刻（主角获得重要物品/功法/机缘）"
+        if "感情" in summary or "表白" in summary or "决裂" in summary:
+            return "感情推进（重要关系突破，表白/和解/决裂）"
         idx = (chapter - 1) % len(self._BEAT_TYPES)
         return self._BEAT_TYPES[idx]
 
     def _get_hook_type_for_chapter(self, chapter: int) -> str:
-        """根据章节号选择章末钩子类型"""
+        """根据大纲内容推断钩子，回退轮询"""
+        summary = self._get_chapter_meta(chapter).get("summary", "") or ""
+        if "秘密" in summary or "真相" in summary or "发现" in summary:
+            return "信息炸弹式（章末扔出一个重磅信息，点燃读者好奇心）"
+        if "突破" in summary or "提升" in summary or "觉醒" in summary:
+            return "悬念式（抛出不可能的悬念，让读者忍不住翻下一章）"
+        if "战斗" in summary or "冲突" in summary or "追杀" in summary:
+            return "动作未完成式（关键时刻打断，下一章继续）"
+        if "反转" in summary or "推翻" in summary:
+            return "反转式（推翻整章建立的认知，最后一行真相炸裂）"
         idx = (chapter - 1) % len(self._HOOK_TYPES)
         return self._HOOK_TYPES[idx]
 
@@ -497,6 +541,10 @@ class WriterAgent:
             scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
             outline_context=self.memory.get_outline_context_prompt(chapter),
             state_snapshot=state_snapshot,
+            correction_history=self.memory.get_correction_history_prompt(chapter),
+            rhythm=self._get_rhythm_for_chapter(chapter),
+            beat_type=self._get_beat_type_for_chapter(chapter),
+            hook_type=self._get_hook_type_for_chapter(chapter),
         )
 
     def _get_rag_context(self, chapter, title, summary, characters) -> str:
@@ -658,6 +706,12 @@ class WriterAgent:
             self.foreshadow.export_to_markdown(output_dir=self.ctx.output_dir)
         except (IOError, OSError) as e:
             logger.warning("伏笔总览导出失败: %s", e)
+
+        # 6. 正文位置扫描（跨章空间守卫依赖此数据）
+        try:
+            self.continuity.enhance_character_location(content, chapter)
+        except Exception as e:
+            print(f"  [WARN] 位置扫描异常: {e}")
 
     def review_loop(self, reviewer, chapter, title, content, summary, time_tag, location, characters, settings_json=None, logic_constraints=""):
         max_revisions = config.MAX_REVIEW_REVISIONS

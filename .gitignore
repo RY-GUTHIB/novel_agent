@@ -46,6 +46,9 @@ data/
 # Logs
 *.log
 
+# Virtual environment
+venv/
+
 # Vendor runtime binaries (not source code)
 /vendor/flet-desktop/
 /vendor/flet-windows.zip

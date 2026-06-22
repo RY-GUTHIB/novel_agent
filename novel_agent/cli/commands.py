@@ -187,6 +187,8 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
     try:
         outline = planner.generate_outline(concept, genre=genre, style=style)
         planner.save_outline_json(outline)
+        memory.outline = outline
+        memory._rebuild_chapter_days()
 
         # 初始化物品状态追踪（方案1+2+5：从大纲中提取 key_items）
         key_items = outline.get("key_items", [])
@@ -279,6 +281,8 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=None, chapt
 
     with open(outline_path, "r", encoding="utf-8") as f:
         outline = json.load(f)
+    memory.outline = outline
+    memory._rebuild_chapter_days()
 
     chapter_plan = _get_chapter_plan(outline)
     if not chapter_plan:
@@ -511,6 +515,11 @@ def cmd_add_fs(memory, continuity, foreshadow, rag, project_name):
 
     try:
         fs_id = foreshadow.add_manual_fs(chapter=chapter, fs_text=content, characters=characters)
+        memory.add_correction(
+            chapter=chapter, issue_type="foreshadow",
+            issue=f"补充伏笔：{content[:60]}",
+            fix=f"已添加伏笔 {fs_id}",
+        )
         print(f"\n✅ 伏笔添加成功！ID: {fs_id}")
         print(f"   内容：{content}")
         print(f"   章节：第 {chapter} 章")
@@ -589,6 +598,11 @@ def cmd_resolve_fs(memory, continuity, foreshadow, rag, project_name):
         resolution = input("兑现方式描述（可选）：").strip()
         try:
             foreshadow.resolve(fs_id, int(chapter) if chapter else 0, resolution or "手动回收")
+            memory.add_correction(
+                chapter=int(chapter) if chapter else 0, issue_type="foreshadow",
+                issue=f"回收伏笔 {fs_id}：{target.content[:60]}",
+                fix=resolution or "手动回收",
+            )
             print(f"\n✅ 伏笔 {fs_id} 已标记为已兑现")
         except Exception as e:
             print(f"❌ 回收失败：{e}")
@@ -596,6 +610,11 @@ def cmd_resolve_fs(memory, continuity, foreshadow, rag, project_name):
         reason = input("放弃原因（可选）：").strip()
         try:
             foreshadow.drop(fs_id, reason or "手动放弃")
+            memory.add_correction(
+                chapter=target.chapter_planted, issue_type="foreshadow",
+                issue=f"放弃伏笔 {fs_id}：{target.content[:60]}",
+                fix=reason or "手动放弃",
+            )
             print(f"\n✅ 伏笔 {fs_id} 已标记为已放弃")
         except Exception as e:
             print(f"❌ 操作失败：{e}")

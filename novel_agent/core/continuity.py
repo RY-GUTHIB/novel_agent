@@ -158,6 +158,121 @@ class ContinuityGuard(JsonRepositoryMixin):
                     result.append(cl.character)
         return list(set(result))
 
+    # ========== 正文位置扫描 ==========
+
+    _MOVE_DIRECTION_MAP = {
+        # === 进入/到达 ===
+        "走进": "in", "进入": "in", "来到": "in", "回到": "in",
+        "踏入": "in", "赶回": "in", "冲进": "in", "跑进": "in",
+        "飞入": "in", "钻进": "in", "躲进": "in", "返回": "in",
+        "抵达": "in", "到达": "in", "步入": "in",
+        # 修仙类补充 — 进入
+        "踏上": "in", "跨入": "in", "跨进": "in", "迈入": "in",
+        "跃进": "in", "跃入": "in", "跃到": "in", "跳入": "in",
+        "闪入": "in", "闪进": "in", "潜入": "in", "潜进": "in",
+        "闯入": "in", "撞进": "in", "掠入": "in", "射入": "in",
+        "落入": "in", "坠入": "in", "沉入": "in", "没入": "in",
+        "滑入": "in", "滚入": "in", "摸入": "in", "摸进": "in",
+        "溜进": "in", "爬进": "in", "奔入": "in", "追入": "in",
+        "遁入": "in", "遁进": "in", "飘入": "in", "飘进": "in",
+        "升入": "in", "降入": "in", "落入": "in",
+        "落到": "in", "降在": "in", "落在": "in",
+        "飞到": "in", "飘到": "in", "游到": "in", "爬到": "in",
+        "追到": "in", "摸到": "in", "潜到": "in", "闪到": "in",
+        "跃到": "in", "传到": "in",
+        "飞抵": "in", "赶至": "in", "飞至": "in",
+        "传送到": "in", "传送至": "in",
+        "瞬移到": "in", "瞬移至": "in",
+        "挪移到": "in", "挪移至": "in",
+        # === 离开/走出 ===
+        "走出": "out", "离开": "out", "退出": "out", "跑出": "out",
+        "飞出": "out", "逃出": "out", "冲出": "out", "爬出": "out",
+        "跳出": "out", "溜出": "out",
+        # 修仙类补充 — 离开
+        "踏出": "out", "跨出": "out", "迈出": "out", "跃出": "out",
+        "闪出": "out", "潜出": "out", "掠出": "out", "射出": "out",
+        "滑出": "out", "滚出": "out", "钻出": "out", "奔出": "out",
+        "窜出": "out", "飘出": "out", "移出": "out",
+        "遁出": "out", "飞出": "out", "飞离": "out",
+        "传出": "out", "传送出": "out", "瞬移出": "out", "挪移出": "out",
+    }
+
+    def scan_final_positions(self, chapter_text: str, known_locations: List[str]) -> Dict[str, dict]:
+        """
+        扫描正文，提取每个人物在章末的最终移动方向。
+
+        Args:
+            chapter_text: 本章正文
+            known_locations: 已知地点列表（从 spacemap + locations 收集）
+
+        Returns:
+            {角色名: {"location": "山谷", "verb": "走出", "direction": "out"}}
+        """
+        # 正则：角色名 + 移动动词 + 地点名
+        results = {}
+        if not chapter_text:
+            return results
+
+        # 从已知地点构建正则（按长度倒序，优先匹配长地名如"后山山谷"而非"山谷"）
+        sorted_locs = sorted(known_locations, key=len, reverse=True)
+        verbs_group = "|".join(self._MOVE_DIRECTION_MAP.keys())
+
+        # 模式1：角色 + 移动动词 + 了? + 地点（如"赵刚走出了山谷"）
+        import re
+        pattern1 = re.compile(
+            r'([\u4e00-\u9fff]{2,4})(' + verbs_group + r')了?\s*(' + '|'.join(re.escape(l) for l in sorted_locs) + r')'
+        )
+        for match in pattern1.finditer(chapter_text):
+            char, verb, loc = match.groups()
+            results[char] = {"location": loc, "verb": verb, "direction": self._MOVE_DIRECTION_MAP[verb]}
+
+        # 模式2：动词 + 了 + 地点（如"走出山谷"无主语，用上一角色名）
+        pattern2 = re.compile(
+            r'(' + verbs_group + r')了?\s*(' + '|'.join(re.escape(l) for l in sorted_locs) + r')'
+        )
+        last_char = None
+        # 先找文中最近出现的角色名
+        char_pattern = re.compile(r'[\u4e00-\u9fff]{2,4}')
+        for match in pattern2.finditer(chapter_text):
+            verb, loc = match.groups()
+            # 找 match 前最近的显式角色名
+            text_before = chapter_text[:match.start()]
+            chars_before = char_pattern.findall(text_before)
+            if chars_before:
+                # 用紧邻的最后一个已知角色名（简单取最近的角色词）
+                last_char = chars_before[-1]
+            if last_char:
+                results[last_char] = {"location": loc, "verb": verb, "direction": self._MOVE_DIRECTION_MAP[verb]}
+
+        return results
+
+    def enhance_character_location(self, chapter_text: str, chapter: int):
+        """
+        调用 scan_final_positions 后用结果增强 character_locations。
+        仅当 direction="out" 时记录到已有记录中。
+        """
+        # 从 spacemap + 已有记录收集已知地点名
+        known_locations = set(self.spacemap.keys())
+        for cl in self.character_locations:
+            if cl.location:
+                known_locations.add(cl.location)
+        if not known_locations:
+            return
+
+        final_positions = self.scan_final_positions(chapter_text, known_locations)
+        for char, pos in final_positions.items():
+            if pos["direction"] != "out":
+                continue
+            # 更新当前章该人物的最新 character_location 记录
+            for cl in reversed(self.character_locations):
+                if cl.chapter == chapter and cl.character == char:
+                    cl.movement_verb = pos["verb"]
+                    cl.direction = pos["direction"]
+                    break
+
+        if final_positions:
+            self.save_character_locations()
+
     # ========== 冲突检测 ==========
 
     def check_continuity(self, chapter: int,

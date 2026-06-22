@@ -134,10 +134,21 @@ class SettingsApplier:
                         skill_name = skill_data.get("skill", "")
                         if skill_name:
                             existing = next((s for s in char.learned_skills if s.get("skill") == skill_name), None)
+                            new_progress = skill_data.get("progress", 0.0)
                             if existing:
+                                old_progress = existing.get("progress", 0.0)
+                                if isinstance(new_progress, (int, float)) and isinstance(old_progress, (int, float)):
+                                    if new_progress < old_progress:
+                                        logger.warning(
+                                            "技能进度倒退: %s.%s %.2f→%.2f (第%d章), 已拒绝降级",
+                                            name, skill_name, old_progress, new_progress, chapter,
+                                        )
+                                        new_progress = old_progress
                                 existing["level"] = skill_data.get("level", existing.get("level", "初学"))
                                 existing["cost"] = skill_data.get("cost", existing.get("cost", ""))
                                 existing["note"] = skill_data.get("note", existing.get("note", ""))
+                                existing["progress"] = new_progress if isinstance(new_progress, (int, float)) else old_progress
+                                existing["last_updated_chapter"] = chapter
                             else:
                                 char.learned_skills.append({
                                     "skill": skill_name,
@@ -145,6 +156,9 @@ class SettingsApplier:
                                     "level": skill_data.get("level", "初学"),
                                     "cost": skill_data.get("cost", ""),
                                     "note": skill_data.get("note", ""),
+                                    "progress": new_progress if isinstance(new_progress, (int, float)) else 0.0,
+                                    "chapter_learned": chapter,
+                                    "last_updated_chapter": chapter,
                                 })
                 updated_count += 1
 
