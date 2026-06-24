@@ -11,7 +11,7 @@ import json
 import re
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 import config
 from novel_agent.core.models import CharacterProfile, LocationProfile, WorldSetting
@@ -20,7 +20,9 @@ from novel_agent.core.continuity import ContinuityGuard
 from novel_agent.core.foreshadow import ForeshadowTracker
 from novel_agent.core.file_utils import atomic_write_json
 from novel_agent.llm.client import generate, parse_json
-from .prompts import PLANNER_SYSTEM_PROMPT, OUTLINE_REFINE_PROMPT
+from novel_agent.project.manager import load_project_config
+from .prompts import (PLANNER_SYSTEM_PROMPT, OUTLINE_REFINE_PROMPT,
+                      OUTLINE_EXTEND_PROMPT, OUTLINE_REPAIR_PROMPT)
 
 logger = logging.getLogger(__name__)
 
@@ -45,25 +47,34 @@ class PlannerAgent:
 【核心创意】{user_idea}
 
 特别注意：
-1. 这是超长篇小说（目标300章+），大纲先规划5卷，每卷15-20章，总共至少50章。逻辑递进合理即可，不需要强制写结局（后续可续写）。
+1. 这是超长篇小说（目标1000章+），大纲先规划3卷，每卷15-35章，总共至少70章。逻辑递进合理即可，不需要强制写结局（后续可续写）。
 2. 前10章通过对话自然交代力量体系，不要旁白大段说明
 3. 势力关系必须满足传递性无冲突，每个势力输出 alliance_chain
 4. 主角成长要慢，每卷突破非强制要求，大境界突破占用一整卷核心事件
 5. 被压制后本卷内必须反杀，破而后立：3章内遇机缘→7章内完成
 6. 暂退需8章内重返清算
 7. 结局不能自爆/同归于尽，主角要活着继续成长
-8. 每卷至少1条跨卷伏笔（type: "cross_volume"），伏笔总量不超过30条
+8. 每卷至少1条跨卷伏笔（type: "cross_volume"），伏笔总数不设硬上限
 9. 每卷必须有 arc 四节点（setback/insight/breakthrough/new_challenge）
 10. 所有关键人物必须有 first_appearance 和 exit_point
 11. 所有关键物品 giver 必须唯一，禁止同一物品多个赠与者
 12. 伏笔跨卷不超过2卷未回收
+13. 必须输出 locations 数组，每章 location 值必须在 locations 数组中有对应条目
+14. 必须输出【核心创意】中提到的所有势力，禁止只输出主角所属势力
+15. side_quests 至少 3 条，覆盖不同支线类型
+
+### JSON 字段类型要求
+- first_appearance: 字符串，如 "第1章"，不可写纯数字
+- plant_chapter / harvest_chapter: 整数
+- chapter / volume: 整数
+- 人物 name / 地点 name: 字符串，不可重复
 
 请严格按照 JSON 格式输出，不要加任何解释文字。"""
 
         base_user_prompt = user_prompt  # 保存原始 prompt，不累积追加
         max_retries = 2
         current_temperature = 0.7
-        current_max_tokens = 16384
+        current_max_tokens = config.MAX_TOKENS
         for attempt in range(max_retries + 1):
             # 重试时不累积追加文本，而是替换为精简提示 + 增大输出空间
             if attempt == 0:
@@ -71,11 +82,11 @@ class PlannerAgent:
             elif attempt == 1:
                 retry_hint = "\n\n⚠️ 上次输出 JSON 格式错误。请只输出 JSON，不要加任何解释文字或 markdown 标记。"
                 current_temperature = 0.5
-                current_max_tokens = 20480
+                current_max_tokens = config.MAX_TOKENS
             else:
                 retry_hint = "\n\n⚠️ 上次输出 JSON 被截断或格式错误。请精简内容、确保 JSON 完整闭合。只输出纯 JSON。"
                 current_temperature = 0.3
-                current_max_tokens = 24576
+                current_max_tokens = config.MAX_TOKENS
 
             response = generate(
                 system_prompt=PLANNER_SYSTEM_PROMPT,
@@ -109,7 +120,7 @@ class PlannerAgent:
             system_prompt=PLANNER_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0.7,
-            max_tokens=8192,
+            max_tokens=32768,
         )
         new_outline = self._extract_json(response)
         if new_outline:
@@ -119,6 +130,313 @@ class PlannerAgent:
                 logger.warning("大纲精炼结构检查失败: %s", e)
                 raise
         return new_outline
+
+    def extend_outline(self, existing_outline: Dict, volumes_to_add: int = config.DEFAULT_VOLUMES_PER_ROUND,
+                        concept: str = "") -> Dict:
+        """在现有大纲末尾追加新卷"""
+        all_chapters = []
+        for vol in existing_outline.get("volumes", []):
+            all_chapters.extend(vol.get("chapters", vol.get("chapter_plan", [])))
+        next_chapter = (all_chapters[-1]["chapter"] + 1) if all_chapters else 1
+        target_chapters = volumes_to_add * 25
+
+        existing_vols = len(existing_outline.get("volumes", []))
+        # 显示最后 3 卷的详细人物/物品（桥接至扩展卷）
+        volume_range = (max(1, existing_vols - 2), existing_vols)
+        existing_summary = self._build_outline_summary(existing_outline, next_chapter - 1, volume_range)
+        # 上下文统计日志
+        lines_count = existing_summary.count("\n") + 1
+        char_count = len(existing_summary)
+        token_est = char_count // 4
+        foreshadows = existing_outline.get("foreshadows", [])
+        unredeemed = sum(1 for f in foreshadows
+                         if isinstance(f, dict) and (
+                             f.get('harvest_chapter', 9999) > next_chapter - 1
+                             or not f.get('harvest_chapter')))
+        print(f"  📐 上下文: {lines_count}行, {char_count}字符(~{token_est}tokens), 其中未回收伏笔 {unredeemed} 条")
+
+        user_prompt = OUTLINE_EXTEND_PROMPT.format(
+            concept=concept,
+            existing_outline_summary=existing_summary,
+            next_chapter=next_chapter,
+            volume_count=volumes_to_add,
+            target_chapters=target_chapters,
+        )
+
+        current_volumes = volumes_to_add
+        for attempt in range(3):
+            response = generate(
+                system_prompt=PLANNER_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                temperature=0.5 if attempt == 0 else 0.3,
+                max_tokens=config.MAX_TOKENS,
+            )
+            # 截断检测
+            if self._detect_truncation(response):
+                if current_volumes > 1:
+                    current_volumes = max(1, current_volumes - 1)
+                    target_chapters = current_volumes * 25
+                    print(f"  ⚠️ LLM 返回被截断，自动降为每轮 {current_volumes} 卷重试")
+                    user_prompt = OUTLINE_EXTEND_PROMPT.format(
+                        concept=concept,
+                        existing_outline_summary=existing_summary,
+                        next_chapter=next_chapter,
+                        volume_count=current_volumes,
+                        target_chapters=target_chapters,
+                    )
+                    continue
+                else:
+                    print("  ⚠️ LLM 返回被截断，即使 1 卷仍截断，尝试继续解析")
+
+            try:
+                new_data = self._extract_json(response)
+                if not isinstance(new_data, dict):
+                    continue
+                new_volumes = new_data.get("volumes", [])
+                if not new_volumes:
+                    logger.warning("扩展大纲：返回的 volumes 为空")
+                    continue
+                # 合并：追加新卷到已有 volumes
+                merged = existing_outline.copy()
+                old_volume_count = len(existing_outline.get("volumes", []))
+                merged["volumes"] = existing_outline.get("volumes", []) + new_volumes
+                # 合并新增的 characters/factions/locations/key_items/foreshadows
+                for key in ("characters", "factions", "locations", "key_items", "foreshadows", "side_quests"):
+                    existing_list = merged.get(key, [])
+                    new_list = new_data.get(key, [])
+                    existing_names = set()
+                    for item in existing_list:
+                        if isinstance(item, dict):
+                            n = item.get("name") or item.get("item_name") or item.get("id")
+                            if n:
+                                existing_names.add(n)
+                    for item in new_list:
+                        if isinstance(item, dict):
+                            n = item.get("name") or item.get("item_name") or item.get("id")
+                            if n and n not in existing_names:
+                                existing_list.append(item)
+                    merged[key] = existing_list
+                # 更新 meta.total_chapters
+                meta = merged.get("meta", {})
+                total = sum(len(v.get("chapters", v.get("chapter_plan", []))) for v in merged.get("volumes", []))
+                meta["total_chapters"] = total
+                merged["meta"] = meta
+
+                self._validate_outline_structure(merged)
+
+                # 自检（不写磁盘）
+                issues = self._run_self_check(merged)
+
+                # 仅跨卷伏笔问题进入修复，其他问题仍显示但不触发修复
+                fs_issues = [i for i in issues if "缺少跨卷伏笔" in i]
+
+                # 修复循环（不写磁盘，仅操作 merged 对象）
+                if fs_issues:
+                    for repair_attempt in range(config.MAX_REVIEW_REVISIONS):
+                        print(f"\n  🔧 自检修复（第{repair_attempt + 1}/{config.MAX_REVIEW_REVISIONS}次）：{len(fs_issues)} 个跨卷伏笔问题")
+                        for issue in fs_issues:
+                            print(f"    - {issue}")
+                        repair_response = generate(
+                            system_prompt=PLANNER_SYSTEM_PROMPT,
+                            user_prompt=OUTLINE_REPAIR_PROMPT.format(
+                                issues="\n".join(f"- {i}" for i in fs_issues),
+                                outline_json=json.dumps(merged, ensure_ascii=False, indent=2),
+                                new_volume_count=len(new_volumes),
+                            ),
+                            temperature=0.3,
+                            max_tokens=config.MAX_TOKENS,
+                        )
+                        try:
+                            repaired = self._extract_json(repair_response)
+                            if not isinstance(repaired, dict):
+                                logger.warning("修复返回格式错误")
+                                continue
+                            # 只替换新增卷（旧卷保持不动）
+                            repaired_vols = repaired.get("volumes", [])
+                            if len(repaired_vols) >= len(merged["volumes"]):
+                                new_repaired = repaired_vols[old_volume_count:]
+                                if len(new_repaired) == len(new_volumes):
+                                    merged["volumes"] = merged["volumes"][:old_volume_count] + new_repaired
+                            # 其他字段正常合并（去重逻辑保护旧数据）
+                            for key in ("characters", "factions", "locations",
+                                        "key_items", "foreshadows", "side_quests",
+                                        "power_system", "protector_network"):
+                                if key in repaired and repaired[key]:
+                                    merged[key] = repaired[key]
+                            merged.setdefault("meta", {})
+                            merged["meta"]["total_chapters"] = sum(
+                                len(v.get("chapters", v.get("chapter_plan", [])))
+                                for v in merged.get("volumes", [])
+                            )
+                            self._validate_outline_structure(merged)
+                            new_issues = self._run_self_check(merged)
+                            remaining_fs = [i for i in new_issues if "缺少跨卷伏笔" in i]
+                            if not remaining_fs:
+                                print("  ✅ 所有跨卷伏笔问题已修复！")
+                                break
+                            print(f"  ⚠️ 修复后仍有 {len(remaining_fs)} 个跨卷伏笔问题")
+                        except Exception as e:
+                            logger.warning("修复解析失败: %s", e)
+                    else:
+                        print(f"  ⚠️ 已达最大修复次数（{config.MAX_REVIEW_REVISIONS}），接受当前版本")
+
+                # ★ 唯一一次写入磁盘 ★
+                self._init_from_outline(merged, clear=False)
+                self.save_outline_json(merged)
+                # 实际返回的实际卷数（可能比 volumes_to_add 少）
+                actual_added = len(new_volumes)
+                logger.info("大纲扩展成功：新增 %d 卷，当前共 %d 卷", actual_added, len(merged["volumes"]))
+                return merged, actual_added
+            except (ValueError, json.JSONDecodeError, KeyError, TypeError) as e:
+                logger.warning("扩展大纲解析失败（第%d次）: %s", attempt + 1, e)
+                if current_volumes > 1:
+                    current_volumes = max(1, current_volumes - 1)
+                    target_chapters = current_volumes * 25
+                    print(f"  ⚠️ JSON 解析失败，自动降为每轮 {current_volumes} 卷重试")
+                    user_prompt = OUTLINE_EXTEND_PROMPT.format(
+                        concept=concept,
+                        existing_outline_summary=existing_summary,
+                        next_chapter=next_chapter,
+                        volume_count=current_volumes,
+                        target_chapters=target_chapters,
+                    )
+                    continue
+                continue
+        raise ValueError("大纲扩展失败：LLM 返回格式错误，已重试3次")
+
+    @staticmethod
+    def _detect_truncation(raw_output: str) -> bool:
+        """检测 LLM 返回是否被截断"""
+        stripped = raw_output.strip()
+        if not stripped:
+            return True
+        last_char = stripped[-1]
+        # JSON 对象/数组未完整闭合 → 截断
+        if last_char == '}' or last_char == ']':
+            return False
+        # 看倒数几行是否有完整的 JSON 结束标记
+        lines = stripped.split('\n')
+        for line in lines[-5:]:
+            trimmed = line.strip()
+            if trimmed == '}' or trimmed == ']' or trimmed == '},' or trimmed == '],':
+                return False
+        return True
+
+    @staticmethod
+    def _build_outline_summary(outline: Dict, max_chapter: int, volume_range: tuple = None) -> str:
+        """构建已有大纲摘要（给 extend prompt 用）
+        volume_range: (start_vol, end_vol) 扩展卷范围，范围内人物/物品详细展示，其余折叠
+        """
+        meta = outline.get("meta", {})
+        volumes = outline.get("volumes", [])
+        all_chapters = []
+        for vol in volumes:
+            all_chapters.extend(vol.get("chapters", vol.get("chapter_plan", [])))
+        chapters_upto = [c for c in all_chapters if c.get("chapter", 0) <= max_chapter]
+
+        # 收集扩展卷范围内的章节号
+        range_chapters = set()
+        if volume_range:
+            for vol in volumes:
+                vn = vol.get("volume", 0)
+                if volume_range[0] <= vn <= volume_range[1]:
+                    for c in vol.get("chapters", vol.get("chapter_plan", [])):
+                        range_chapters.add(c.get("chapter", 0))
+
+        lines = [
+            f"小说标题：{meta.get('title', '')}",
+            f"世界观：{meta.get('setting', '')}",
+            f"已规划 {len(volumes)} 卷，共 {len(chapters_upto)} 章",
+            "",
+            "### 已有力量体系",
+        ]
+        for ps in outline.get("power_system", []):
+            lines.append(f"- L{ps.get('level', '?')} {ps.get('name', '')}")
+        lines.append("")
+
+        total_chars = len(outline.get("characters", []))
+        lines.append(f"### 👥 人物修为快照（共 {total_chars} 人）")
+        detail_chars = []
+        fold_chars = 0
+        for c in outline.get("characters", []):
+            # 检查该人物是否在扩展卷范围内出场
+            in_range = False
+            if volume_range and range_chapters:
+                for vol in volumes:
+                    for ch in vol.get("chapters", vol.get("chapter_plan", [])):
+                        for name in ch.get("characters", []):
+                            clean = name.split("（")[0] if "（" in name else name
+                            if clean == c.get("name", "") and ch.get("chapter", 0) in range_chapters:
+                                in_range = True
+                                break
+                    if in_range:
+                        break
+            if volume_range and not in_range:
+                fold_chars += 1
+                continue
+            rels = c.get("relationships", {})
+            rel_str = "；".join(f"{k}（{v}）" for k, v in rels.items()) if rels else ""
+            parts = [f"- {c.get('name', '')}（{c.get('identity', '')}）"]
+            if c.get("cultivation"):
+                parts.append(f"修为={c.get('cultivation', '')}")
+            if c.get("current_location"):
+                parts.append(f"位置={c.get('current_location', '')}")
+            if rel_str:
+                parts.append(f"关系=[{rel_str}]")
+            detail_chars.append(" | ".join(parts))
+        if detail_chars:
+            lines.extend(detail_chars)
+        if fold_chars > 0:
+            lines.append(f"  ...其他 {fold_chars} 人省略（未在将扩展卷范围内出场）")
+        lines.append("")
+        lines.append("### 已有势力")
+        for f in outline.get("factions", [])[:80]:
+            lines.append(f"- {f.get('name', '')}（{f.get('level', '')}，首领={f.get('leader', '')}）")
+        lines.append("")
+
+        total_items = len(outline.get("key_items", []))
+        lines.append(f"### 📦 已有物品归属（共 {total_items} 件）")
+        detail_items = []
+        fold_items = 0
+        for item in outline.get("key_items", []):
+            in_range = False
+            if volume_range and range_chapters:
+                fc = item.get("first_chapter", 0)
+                if fc in range_chapters:
+                    in_range = True
+            if volume_range and not in_range:
+                fold_items += 1
+                continue
+            detail_items.append(f"- {item.get('item_name', '')}：{item.get('giver', '?')}→{item.get('receiver', '?')}（{item.get('purpose', '')}）")
+        if detail_items:
+            lines.extend(detail_items)
+        if fold_items > 0:
+            lines.append(f"  ...其他 {fold_items} 件省略（不在将扩展卷范围内首次出现）")
+        lines.append("")
+        lines.append("### 🎯 未回收伏笔")
+        foreshadows = outline.get("foreshadows", [])
+        unredeemed = [fs for fs in foreshadows
+                      if isinstance(fs, dict) and (
+                          fs.get('harvest_chapter', 9999) > max_chapter
+                          or not fs.get('harvest_chapter'))]
+        for fs in unredeemed:
+            pc = fs.get('plant_chapter', '?')
+            hc = fs.get('harvest_chapter', '待定')
+            lines.append(f"- [{fs.get('id', '')}] 第{pc}章→第{hc}章：{fs.get('content', '')}")
+        lines.append("")
+        lines.append(f"### 最近章节摘要（第{max(1, max_chapter-5)}-{max_chapter}章）")
+        for c in chapters_upto[-10:]:
+            ch = c.get('chapter', '?')
+            lines.append(f"- 第{ch}章《{c.get('title', '')}》：{c.get('summary', '')}")
+        lines.append("")
+        lines.append(f"### 第{max_chapter}章末的状态")
+        last_ch = chapters_upto[-1] if chapters_upto else {}
+        lines.append(f"- 时间：{last_ch.get('time', '')}")
+        lines.append(f"- 地点：{last_ch.get('location', '')}")
+        lines.append(f"- 出场人物：{', '.join(last_ch.get('characters', []))}")
+        lines.append(f"- 未回收伏笔：需要在后续章节中逐步回收")
+
+        return "\n".join(lines)
 
     def _validate_outline_structure(self, outline: dict):
         """检查大纲关键字段类型，不符合则抛 ValueError 触发 LLM 重试"""
@@ -147,9 +465,26 @@ class PlannerAgent:
             for ch in vol.get("chapters", []):
                 if not isinstance(ch, dict):
                     raise ValueError(f"卷 {vol.get('volume', '?')} 的 chapters 中存在非对象元素，触发重试")
+                ch_num = ch.get("chapter")
+                if ch_num is not None and not isinstance(ch_num, int):
+                    raise ValueError(
+                        f"卷 {vol.get('volume', '?')} 中 chapter 字段类型错误: "
+                        f"期望 int，实际 {type(ch_num).__name__}（值={ch_num!r}），触发重试"
+                    )
 
-    def _init_from_outline(self, outline: Dict, clear: bool = True):
-        """将大纲数据写入各管理模块"""
+    def _load_config_main_character(self) -> str:
+        """从 config.json 读取手动设置的主角名"""
+        try:
+            project_name = config.get_project_name()
+            if project_name:
+                cfg = load_project_config(project_name)
+                return cfg.get("main_character", "")
+        except Exception:
+            pass
+        return ""
+
+    def _init_from_outline(self, outline: Dict, clear: bool = True) -> List[str]:
+        """将大纲数据写入各管理模块，返回自检问题列表"""
         self._validate_outline_structure(outline)
         if clear:
             self.memory.characters.clear()
@@ -166,17 +501,24 @@ class PlannerAgent:
         self._init_power_system(outline)
         self._init_protector_network(outline)
         self._init_characters(outline)
+        # 主角检测：从 config.json 读取手动设置
+        if outline.get("characters"):
+            cfg_name = self._load_config_main_character()
+            if cfg_name and cfg_name in {c.get("name", "") for c in outline["characters"]}:
+                self.memory.main_character = cfg_name
         self._init_locations(outline)
         self._init_factions(outline)
         self._init_key_items(outline)
         self._init_chapters(outline)
 
         # 自检清单
-        self._run_self_check(outline)
+        issues = self._run_self_check(outline)
 
         self.memory.save_all()
         self.continuity.save_all()
         self.foreshadow.save()
+
+        return issues
 
     def _init_world_settings(self, outline: Dict):
         meta = outline.get("meta", {})
@@ -207,7 +549,7 @@ class PlannerAgent:
         for c_data in outline.get("characters", []):
             # 解析 first_appearance 中的数字
             first_app = 1
-            fa_str = c_data.get("first_appearance", "第1章")
+            fa_str = str(c_data.get("first_appearance", "第1章"))
             fa_match = re.search(r'(\d+)', fa_str)
             if fa_match:
                 first_app = int(fa_match.group(1))
@@ -266,9 +608,12 @@ class PlannerAgent:
                             value=fac_data["value"],
                             chapter_introduced=fac_data.get("chapter_introduced", 1)
                         ))
+                return  # 加载成功 → 跳过大纲 factions 数组（避免重复）
             except Exception as e:
-                logger.warning(f"加载 factions.json 失败: {e}")
-            return  # 如果 factions.json 存在，不再处理大纲中的 factions 数组，避免重复
+                logger.error(f"factions.json 损坏，请检查并修复该文件: {e}")
+                print(f"\n❌ data/factions.json 文件损坏，请检查修复: {e}")
+                print(f"  已回退到大纲 factions 数组，数据可能不完整")
+                # 加载失败 → fall through 到大纲 factions 数组（兼容旧格式）
 
         # 处理大纲中的 factions 数组（旧格式，兼容）
         for fac_data in outline.get("factions", []):
@@ -327,6 +672,11 @@ class PlannerAgent:
 
         for ch_data in all_chapters:
             chapter = ch_data.get("chapter", 1)
+
+            # 去重：extend 场景下 clear=False，已有事件的章节跳过，避免重复添加
+            if self.continuity.get_events_for_chapter(chapter):
+                continue
+
             time_tag = ch_data.get("time", f"第{chapter}章")
             summary = ch_data.get("summary", "")
             location = ch_data.get("location", "")
@@ -347,12 +697,17 @@ class PlannerAgent:
 
         # 处理顶层 foreshadows 数组（新格式：含 id/plant_chapter/harvest_chapter/type）
         fs_list = outline.get("foreshadows", [])
+        existing_fs_contents = {(fs.chapter_planted, fs.content) for fs in self.foreshadow.foreshadows}
         if fs_list:
             for fs_data in fs_list:
                 if isinstance(fs_data, dict) and fs_data.get("content"):
+                    content = fs_data["content"]
+                    ch = fs_data.get("plant_chapter", 1)
+                    # 去重：内容+章节已存在则跳过（extend 场景）
+                    if (ch, content) in existing_fs_contents:
+                        continue
                     fs_id = self.foreshadow.plant(
-                        chapter=fs_data.get("plant_chapter", 1),
-                        content=fs_data["content"],
+                        chapter=ch, content=content,
                         type=fs_data.get("type", "cross_volume"),
                         related_characters=[],
                         importance=3,
@@ -366,37 +721,13 @@ class PlannerAgent:
                                 fs.resolution = f"第{harvest_ch}章自动回收"
                                 break
 
-            # 伏笔总量 > 30 时自动精简：仅保留跨卷伏笔 + 最近 2 卷的当卷伏笔
+            # 伏笔精简已移除：保留全部伏笔，generate_foreshadow_prompt(chapter) 自动过滤
             total_fs = len(self.foreshadow.foreshadows)
             if total_fs > 30:
-                vol_ranges = []
-                for vol in volumes:
-                    chs = vol.get("chapters", [])
-                    if chs:
-                        vol_ranges.append((chs[0]["chapter"], chs[-1]["chapter"]))
-                last_vol = vol_ranges[-1] if vol_ranges else (0, 9999)
-                second_last_vol = vol_ranges[-2] if len(vol_ranges) >= 2 else (0, 0)
+                logger.info("伏笔总数 %d 条（全部保留，由 generate_foreshadow_prompt 自动过滤不剧透）", total_fs)
 
-                kept = []
-                for fs in self.foreshadow.foreshadows:
-                    ch = fs.chapter_planted
-                    harvest = fs.chapter_resolved
-                    is_cross = harvest and harvest > (last_vol[1] if last_vol else ch)
-                    is_recent = (second_last_vol[0] <= ch <= last_vol[1])
-                    if is_cross or is_recent:
-                        kept.append(fs)
-
-                seen = set()
-                final = []
-                for fs in kept:
-                    if fs.id not in seen:
-                        seen.add(fs.id)
-                        final.append(fs)
-                self.foreshadow.foreshadows = final
-                logger.info("伏笔从 %d 条精简至 %d 条（仅保留跨卷+最近2卷）", total_fs, len(final))
-
-    def _run_self_check(self, outline: Dict):
-        """生成完成后强制自检"""
+    def _run_self_check(self, outline: Dict) -> List[str]:
+        """生成完成后强制自检，返回问题列表"""
         issues = []
         volumes = outline.get("volumes", [])
         issues.extend(self._check_chapter_count(volumes))
@@ -415,18 +746,21 @@ class PlannerAgent:
                 logger.info("  - %s", issue)
         else:
             logger.info("大纲自检全部通过")
+        return issues
 
     def _check_chapter_count(self, volumes: list) -> list:
-        """检查总章数≥50，每卷15-20章"""
+        """检查总章数≥70，每卷15-35章"""
         issues = []
         all_vol_chs = []
         for vol in volumes:
             chs = vol.get("chapters", [])
             all_vol_chs.extend(chs)
-            if len(chs) < 15 or len(chs) > 20:
-                issues.append(f"第{vol.get('volume','?')}卷章节数={len(chs)}，不在15-20范围")
-        if len(all_vol_chs) < 50:
-            issues.append(f"实际总章数={len(all_vol_chs)}，未达 ≥50")
+            if len(chs) < 15:
+                issues.append(f"第{vol.get('volume','?')}卷章节数={len(chs)}，低于15章建议扩充")
+            elif len(chs) > 35:
+                issues.append(f"第{vol.get('volume','?')}卷章节数={len(chs)}，超过35章建议压缩")
+        if len(all_vol_chs) < 70:
+            issues.append(f"实际总章数={len(all_vol_chs)}，未达 ≥70")
         return issues
 
     def _check_volume_arcs(self, volumes: list) -> list:
@@ -475,11 +809,21 @@ class PlannerAgent:
         return issues
 
     def _check_characters(self, outline: dict) -> list:
-        """检查人物exit_point"""
+        """检查人物必填字段：exit_point、cultivation、gender、personality、appearance等"""
         issues = []
+        required_fields = [
+            "exit_point", "cultivation", "gender", "age",
+            "appearance", "personality", "background", "goals", "speaking_style",
+        ]
         for c in outline.get("characters", []):
-            if not c.get("exit_point"):
-                issues.append(f"人物'{c.get('name','')}'缺少 exit_point")
+            name = c.get('name', '?')
+            for field in required_fields:
+                val = c.get(field, "")
+                if not val or str(val).strip() == "":
+                    issues.append(f"人物'{name}'缺少 {field}")
+            # abilities 至少一条
+            if not c.get("abilities") or len(c.get("abilities", [])) == 0:
+                issues.append(f"人物'{name}'缺少 abilities（至少1条技能）")
         return issues
 
     def _check_items(self, outline: dict) -> list:
@@ -496,11 +840,8 @@ class PlannerAgent:
         return issues
 
     def _check_foreshadows(self, outline: dict, volumes: list) -> list:
-        """检查伏笔：总数≤30、每卷跨卷伏笔、跨卷不超过2卷"""
+        """检查伏笔：每卷跨卷伏笔、跨卷不超过2卷"""
         issues = []
-        fs_count = len(self.foreshadow.foreshadows)
-        if fs_count > 30:
-            issues.append(f"伏笔总数={fs_count}，超过30")
         total_vols = len(volumes)
         for i, vol in enumerate(volumes):
             if i + 1 == total_vols:

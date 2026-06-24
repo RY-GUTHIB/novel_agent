@@ -40,6 +40,14 @@ class SettingsApplier:
             self.apply_tasks(parsed.get("tasks", []), chapter)
             self.apply_timeline_events(parsed.get("timeline_events", []), chapter)
             self.apply_style(parsed.get("style", {}))
+            self.apply_arc_events(parsed.get("arc_events", []), chapter)
+            # 回写本章摘要到大纲
+            summary_text = parsed.get("summary", "").strip()
+            if summary_text:
+                try:
+                    self.memory.outline_manager.backfill_summary(chapter, summary_text)
+                except Exception as e:
+                    logger.warning("摘要回写大纲失败: %s", e)
         except (KeyError, ValueError, TypeError, AttributeError) as e:
             logger.error("设定回写失败: %s", e)
             raise
@@ -535,6 +543,31 @@ class SettingsApplier:
             count += 1
         if count:
             logger.info("时间线: 新增 %d 个时间线事件", count)
+
+    def apply_arc_events(self, items: list, chapter: int):
+        count = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            char = item.get("character", "").strip()
+            element = item.get("element", "").strip()
+            event_type = item.get("event_type", "").strip()
+            desc = item.get("description", "").strip()
+            if not char or not element or not event_type or not desc:
+                continue
+            if element not in ("core_value", "core_desire", "core_fear", "flaw"):
+                continue
+            if event_type not in ("explored", "challenged", "changed", "resolved"):
+                continue
+            self.memory.arc_tracker.record(
+                character=char, chapter=chapter,
+                element=element, event_type=event_type,
+                description=desc,
+                new_value=item.get("new_value", ""),
+            )
+            count += 1
+        if count:
+            logger.info("成长弧: 新增 %d 个弧事件", count)
 
     def apply_style(self, style_updates: dict):
         if not style_updates or not isinstance(style_updates, dict):

@@ -26,10 +26,6 @@ class OutlineView(ft.Column):
                                          on_click=lambda e: self.did_mount())
         self.gen_btn = ft.FilledTonalButton("🤖 生成大纲", icon=ft.Icons.AUTO_AWESOME,
                                             on_click=self._on_generate)
-        self.extend_btn = ft.FilledTonalButton("📝 续写大纲", icon=ft.Icons.ADD,
-                                               on_click=self._on_extend, disabled=True)
-        self.rewrite_btn = ft.FilledTonalButton("🔄 重写后续大纲", icon=ft.Icons.REFRESH,
-                                                on_click=self._on_rewrite, disabled=True)
         self.title_text = ft.Text("小说标题", size=20, weight=ft.FontWeight.BOLD)
 
         # ===== 进度条 =====
@@ -60,7 +56,7 @@ class OutlineView(ft.Column):
             ft.Row([
                 ft.Text("📖 大纲管理", size=22, weight=ft.FontWeight.BOLD),
                 ft.Container(expand=True),
-                self.refresh_btn, self.gen_btn, self.extend_btn, self.rewrite_btn,
+                self.refresh_btn, self.gen_btn,
             ]),
             self.title_text,
             self.meta_card,
@@ -89,8 +85,6 @@ class OutlineView(ft.Column):
                 ft.Text("还没有生成大纲", color="grey_500", size=16),
                 ft.ElevatedButton("🤖 立即生成大纲", on_click=self._on_generate),
             ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-            self.extend_btn.disabled = True
-            self.rewrite_btn.disabled = True
             self.chapter_detail_card.visible = False
             self.update()
             return
@@ -124,8 +118,6 @@ class OutlineView(ft.Column):
         # 构建树
         tree = self._build_tree(outline)
         self.tree_container.content = tree
-        self.extend_btn.disabled = False
-        self.rewrite_btn.disabled = False
         self.chapter_detail_card.visible = False
         self.update()
 
@@ -261,31 +253,10 @@ class OutlineView(ft.Column):
     def _set_loading(self, loading: bool):
         self._loading = loading
         self.gen_btn.disabled = loading
-        self.extend_btn.disabled = loading or not self.state.outline
-        self.rewrite_btn.disabled = loading or not self.state.outline
         self.refresh_btn.disabled = loading
         self._progress_bar.visible = loading
         self.error.hide()
         self.update()
-
-    def _get_existing_chapters_summary(self):
-        """获取已写章节的摘要，用于重写大纲"""
-        import glob
-        from pathlib import Path
-        if not self.state._ctx:
-            return "无"
-        files = glob.glob(str(self.state._ctx.chapters_dir / "chapter_*.md"))
-        existing = set()
-        for f in files:
-            stem = Path(f).stem
-            parts = stem.split("_")
-            if len(parts) > 1 and parts[1].isdigit():
-                existing.add(int(parts[1]))
-        written_titles = []
-        for ch in self.state.chapter_plan:
-            if ch.get("chapter") in existing:
-                written_titles.append(f"第{ch['chapter']}章 {ch.get('title', '')}")
-        return "、".join(written_titles) if written_titles else "无"
 
     def _on_generate(self, e):
         """首次生成大纲"""
@@ -339,118 +310,6 @@ class OutlineView(ft.Column):
                 self.error.hide()
                 self._refresh()
                 self._save_llm_title()
-                self._set_loading(False)
-            self.update()
-
-        threading.Thread(target=check_done, daemon=True).start()
-
-    def _on_extend(self, e):
-        """续写大纲：在现有大纲基础上追加更多卷"""
-        if not self.state.outline:
-            self.error.show("请先生成大纲", "warning")
-            self.update()
-            return
-
-        _error_msg = [None]
-        project_name = self.state.current_project
-
-        def do_extend():
-            try:
-                memory, continuity, foreshadow, rag = self.state.get_services()
-                from novel_agent.llm.client import check_api_key
-                check_api_key()
-                ctx = self.state._ctx
-                from novel_agent.agents.planner import PlannerAgent
-                planner = PlannerAgent(memory, continuity, foreshadow, ctx=ctx)
-
-                existing = self._get_existing_chapters_summary()
-                prompt = (
-                    f"当前大纲已有 {len(self.state.outline.get('volumes', []))} 卷。"
-                    f"已写章节: {existing}。"
-                    f"请在现有大纲基础上追加 1-2 卷新内容（保持原有内容不变），"
-                    f"新卷的章节号从已有章节之后续编。"
-                )
-                new_outline = planner.refine_outline(self.state.outline, prompt)
-                planner.save_outline_json(new_outline)
-                self.state._load_outline()
-            except Exception as ex:
-                _error_msg[0] = str(ex)
-
-        self._set_loading(True)
-        self.error.show("正在续写大纲...", "info")
-        self.update()
-        thread = threading.Thread(target=do_extend, daemon=True)
-        thread.start()
-
-        def check_done():
-            import time
-            while thread.is_alive():
-                time.sleep(0.5)
-            if _error_msg[0]:
-                from novel_agent.gui.utils.error_handler import ErrorHandler
-                msg = ErrorHandler.user_message(Exception(_error_msg[0]))
-                self._set_loading(False)
-                self.error.show(msg, "error")
-            else:
-                self.error.hide()
-                self._refresh()
-                _show_snackbar(self.page_ref, "大纲续写完成", 3000)
-                self._set_loading(False)
-            self.update()
-
-        threading.Thread(target=check_done, daemon=True).start()
-
-    def _on_rewrite(self, e):
-        """重写后续大纲：根据已写章节重规划剩余内容"""
-        if not self.state.outline:
-            self.error.show("请先生成大纲", "warning")
-            self.update()
-            return
-
-        _error_msg = [None]
-        project_name = self.state.current_project
-
-        def do_rewrite():
-            try:
-                memory, continuity, foreshadow, rag = self.state.get_services()
-                from novel_agent.llm.client import check_api_key
-                check_api_key()
-                ctx = self.state._ctx
-                from novel_agent.agents.planner import PlannerAgent
-                planner = PlannerAgent(memory, continuity, foreshadow, ctx=ctx)
-
-                existing = self._get_existing_chapters_summary()
-                prompt = (
-                    f"已有以下章节已完成: {existing}。"
-                    f"请根据已完成章节的内容走向，重新规划剩余未写章节的大纲"
-                    f"（章节号、标题、概要、关键事件），"
-                    f"保持已有章节内容不变。如有必要可以调整后续卷的主题弧线。"
-                )
-                new_outline = planner.refine_outline(self.state.outline, prompt)
-                planner.save_outline_json(new_outline)
-                self.state._load_outline()
-            except Exception as ex:
-                _error_msg[0] = str(ex)
-
-        self._set_loading(True)
-        self.error.show("正在重写后续大纲...", "info")
-        self.update()
-        thread = threading.Thread(target=do_rewrite, daemon=True)
-        thread.start()
-
-        def check_done():
-            import time
-            while thread.is_alive():
-                time.sleep(0.5)
-            if _error_msg[0]:
-                from novel_agent.gui.utils.error_handler import ErrorHandler
-                msg = ErrorHandler.user_message(Exception(_error_msg[0]))
-                self._set_loading(False)
-                self.error.show(msg, "error")
-            else:
-                self.error.hide()
-                self._refresh()
-                _show_snackbar(self.page_ref, "后续大纲已重写完成", 3000)
                 self._set_loading(False)
             self.update()
 

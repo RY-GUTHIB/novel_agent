@@ -73,12 +73,16 @@ except Exception as e:
 # ----------------------------------------------------------
 print("\n[1/6] 开始生成大纲...")
 try:
-    planner = PlannerAgent(memory, continuity, foreshadow)
+    planner = PlannerAgent(memory, continuity, foreshadow, ctx=ctx)
     outline = planner.generate_outline(TEST_IDEA, TEST_GENRE, TEST_STYLE)
     if outline:
         planner.save_outline_json(outline)
+        all_chapters = []
+        for vol in outline.get("volumes", []):
+            all_chapters.extend(vol.get("chapters", []))
+        total = outline.get("meta", {}).get("total_chapters", len(all_chapters))
         print(f"  [OK] 大纲生成成功！标题: {outline.get('title', '未知')}")
-        print(f"  规划章节数: {len(outline.get('chapter_plan', []))}")
+        print(f"  规划章节数: {total}")
         print(f"  人物数: {len(outline.get('characters', []))}")
         print(f"  地点数: {len(outline.get('locations', []))}")
 
@@ -97,10 +101,13 @@ except Exception as e:
 # ----------------------------------------------------------
 print("\n[2/6] 开始写第1章...")
 try:
-    writer = WriterAgent(memory, continuity, foreshadow, genre=TEST_GENRE, style=TEST_STYLE)
+    writer = WriterAgent(memory, continuity, foreshadow, ctx=ctx, genre=TEST_GENRE, style=TEST_STYLE)
 
+    all_chapters = []
+    for vol in outline.get("volumes", []):
+        all_chapters.extend(vol.get("chapters", []))
     ch_info = None
-    for ch in outline.get("chapter_plan", []):
+    for ch in all_chapters:
         if ch.get("chapter") == 1:
             ch_info = ch
             break
@@ -113,7 +120,7 @@ try:
         chapter=ch_info.get("chapter", 1),
         title=ch_info.get("title", ""),
         summary=ch_info.get("summary", ""),
-        time_tag=ch_info.get("time_tag", ""),
+        time_tag=ch_info.get("time", ""),
         location=ch_info.get("location", ""),
         characters=ch_info.get("characters", [])
     )

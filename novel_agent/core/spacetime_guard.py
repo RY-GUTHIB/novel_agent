@@ -177,12 +177,12 @@ class SpacetimeGuard:
         - "三日后" → 3
         - "第一章-春" → 无法解析，返回 None
         """
-        # 匹配 "第N日" / "第N天"
-        m = re.match(r'第\s*([一二三四五六七八九十百零\d]+)\s*[日天]', time_tag)
+        # 匹配 "第N日" / "第N天"（用 search 而非 match，兼容"炼气三层·第1天"格式）
+        m = re.search(r'第\s*([一二三四五六七八九十百零\d]+)\s*[日天]', time_tag)
         if m:
             return parse_chinese_number(m.group(1))
         # 匹配 "第三日" / "第十五天"（无"第"前缀）
-        m = re.match(r'([一二三四五六七八九十百零\d]+)\s*[日天]', time_tag.strip())
+        m = re.search(r'([一二三四五六七八九十百零\d]+)\s*[日天]', time_tag.strip())
         if m:
             return parse_chinese_number(m.group(1))
         # 匹配纯数字 "3" / "15"

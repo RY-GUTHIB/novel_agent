@@ -95,6 +95,13 @@ class ForeshadowTracker(JsonRepositoryMixin):
                 self.save()
                 return
 
+    def exists(self, content: str) -> bool:
+        normalized = re.sub(r'\s+', '', content)
+        for fs in self.foreshadows:
+            if re.sub(r'\s+', '', fs.content) == normalized:
+                return True
+        return False
+
     def auto_resolve(self, content: str, chapter: int) -> int:
         """自动检测正文中是否兑现了待回收伏笔
         

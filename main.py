@@ -2,21 +2,26 @@
 main.py - 小说创作 Agent CLI（多项目版）
 
 使用方式：
-  python main.py              # 交互式启动（选项目 + 命令循环）
-  python main.py new          # 新建小说（交互式输入设定）
-  python main.py write        # 生成下一章
-  python main.py write --ch 5 # 生成指定章节
-  python main.py review       # 审校最新章节
-  python main.py viz          # 生成三大可视化
-  python main.py status       # 显示当前进度/状态
-  python main.py add-fs       # 手动添加伏笔
-  python main.py fs-map       # 生成伏笔总览
-  python main.py list         # 列出所有小说项目
+  python main.py                    # 交互式启动（选项目 + 命令循环）
+  python main.py new                # 新建小说（交互式输入设定）
+  python main.py write              # 生成下一章
+  python main.py write --ch 5       # 生成指定章节
+   python main.py extend             # 扩展大纲（追加5卷）
+   python main.py extend --volumes 10 # 扩展大纲（追加10卷）
+  python main.py review             # 审校最新章节
+  python main.py viz                # 生成三大可视化
+  python main.py status             # 显示当前进度/状态
+  python main.py add-fs             # 手动添加伏笔
+  python main.py fs-map             # 生成伏笔总览
+  python main.py list               # 列出所有小说项目
 """
 
 import logging
 import sys
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +47,7 @@ from novel_agent.cli.commands import (
     select_project, create_new_project, interactive_loop,
     cmd_write, cmd_review, cmd_viz, cmd_status,
     cmd_new, cmd_add_fs, cmd_resolve_fs, cmd_fs_map, cmd_list,
-    cmd_de_ai,
+    cmd_de_ai, cmd_extend, cmd_set_main_char,
     get_current_project_name,
     init_services, check_api_key,
 )
@@ -119,11 +124,33 @@ def main():
         cmd_fs_map(memory, continuity, foreshadow, rag, project_name)
     elif command == "de-ai":
         cmd_de_ai(memory, continuity, foreshadow, rag, project_name)
+    elif command == "set-main-char":
+        cmd_set_main_char(memory, continuity, foreshadow, rag, project_name)
+    elif command == "extend":
+        volumes = 3
+        if "--volumes" in sys.argv:
+            idx = sys.argv.index("--volumes")
+            try:
+                volumes = int(sys.argv[idx + 1])
+            except (IndexError, ValueError):
+                print("❌ --volumes 参数必须是正整数")
+                return
+        cmd_extend(memory, continuity, foreshadow, rag, project_name, volumes=volumes)
     else:
         print(f"❌ 未知命令：{command}")
-        print("可用命令：new, write, review, viz, status, add-fs, resolve-fs, fs-map, de-ai, list")
+        print("可用命令：new, write, review, viz, status, extend, set-main-char, add-fs, resolve-fs, fs-map, de-ai, list")
         print("或直接运行 python main.py 进入交互模式")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n⏸️  用户中断")
+        sys.exit(0)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"\n❌ 程序异常退出：{e}")
+        input("\n按 Enter 键退出...")
+        sys.exit(1)

@@ -21,8 +21,81 @@ logger = logging.getLogger(__name__)
 _JSON_BLOCK_PATTERN = re.compile(r'```(?:json)?\s*([\s\S]*?)\s*```')
 
 # 重试配置
-MAX_RETRIES = 3
+MAX_RETRIES = 2
 RETRY_BASE_DELAY = 2  # 秒，指数退避基数
+
+# ========== Token 预检 ==========
+
+_ESTIMATOR = None  # 懒加载的 tokenizer
+
+
+def _get_tokenizer():
+    """懒加载 tiktoken 编码器（cl100k_base）"""
+    global _ESTIMATOR
+    if _ESTIMATOR is not None:
+        return _ESTIMATOR
+    try:
+        import tiktoken
+        _ESTIMATOR = tiktoken.get_encoding("cl100k_base")
+    except (ImportError, Exception):
+        _ESTIMATOR = None
+    return _ESTIMATOR
+
+
+def _estimate_tokens(text: str) -> int:
+    """估算文本的 token 数。
+    优先用 tiktoken（cl100k_base 编码），
+    不可用时用近似公式：中英文混合 ~每 2 字符 1 token。
+    """
+    enc = _get_tokenizer()
+    if enc:
+        try:
+            return len(enc.encode(text))
+        except Exception:
+            pass
+    # fallback: 中文约 1.8 字符/token，英文约 4 字符/token
+    # 保守取 2 字符/token
+    return max(1, len(text) // 2)
+
+
+def check_token_budget(system_prompt: str, user_prompt: str,
+                       max_tokens: int, model_name: str) -> None:
+    """调用 LLM 前检查 prompt 是否超出模型上下文窗口的安全比例。
+    超限时抛出 ValueError，附带详细诊断。
+    """
+    context_limit = config.MODEL_CONTEXT_WINDOWS.get(model_name, 0)
+    if context_limit <= 0:
+        # 未知模型不阻止调用，但记录 warning
+        system_tok = _estimate_tokens(system_prompt)
+        user_tok = _estimate_tokens(user_prompt)
+        total = system_tok + user_tok
+        logger.info("Token 预算未知模型 %s：~%d prompt tokens + %d max_tokens",
+                    model_name, total, max_tokens)
+        return
+
+    system_tok = _estimate_tokens(system_prompt)
+    user_tok = _estimate_tokens(user_prompt)
+    total = system_tok + user_tok
+    safe_budget = int(context_limit * config.MAX_PROMPT_TOKENS_RATIO)
+
+    logger.info("Token 预算 [%s]：当前 prompt ~%d (sys=%d + user=%d), max_tokens=%d, 模型总窗口=%d, 安全阈值=%d(%.0f%%)",
+                model_name, total, system_tok, user_tok, max_tokens, context_limit, safe_budget,
+                config.MAX_PROMPT_TOKENS_RATIO * 100)
+
+    if total + max_tokens > context_limit:
+        raise ValueError(
+            f"Token 超限！模型 {model_name} 上下文窗口 {context_limit} tokens，"
+            f"prompt ~{total} + max_tokens {max_tokens} = {total + max_tokens} 已超出上限。\n"
+            f"建议：减少大纲上下文窗口(OUTLINE_WINDOW_BEFORE/AFTER)，或降低 max_tokens。"
+        )
+
+    if total > safe_budget:
+        logger.warning(
+            "Prompt token 数 ~%d 超出安全上限 %d（上下文窗口 %d 的 %d%%），"
+            "可能影响生成质量或被静默截断",
+            total, safe_budget, context_limit,
+            int(config.MAX_PROMPT_TOKENS_RATIO * 100),
+        )
 
 # ========== 可重试异常集合 ==========
 
@@ -74,10 +147,12 @@ def _retry(fn, *args, max_retries=MAX_RETRIES, **kwargs):
                 raise
             if attempt < max_retries:
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
-                logger.warning(f"LLM 调用失败（第{attempt+1}次），{delay}秒后重试: {e}")
+                print(f"  ⚠️ LLM 调用失败（{attempt+1}/{max_retries}），{delay}秒后重试: {type(e).__name__}")
+                logger.warning("LLM 调用失败（第%d次），%d秒后重试: %s", attempt + 1, delay, e)
                 time.sleep(delay)
             else:
-                logger.error(f"LLM 调用失败（已重试{max_retries}次）: {e}")
+                print(f"  ❌ LLM 调用失败（已重试{max_retries}次）: {type(e).__name__}")
+                logger.error("LLM 调用失败（已重试%d次）: %s", max_retries, e)
     raise last_exc
 
 
@@ -109,7 +184,7 @@ def _get_client(base_url: str, api_key: str):
         from openai import OpenAI
     except ImportError:
         raise ImportError("请先安装 openai: pip install openai>=1.0.0")
-    return OpenAI(base_url=base_url, api_key=api_key)
+    return OpenAI(base_url=base_url, api_key=api_key, timeout=300, max_retries=0)
 
 
 def clear_client_cache():
@@ -216,6 +291,9 @@ def generate(system_prompt: str, user_prompt: str,
     provider = config.LLM_PROVIDER.lower()
     base_url, api_key, model, api_type = _get_provider_config(provider)
 
+    # Token 预算预检：在 LLM 调用前拦截超限请求
+    check_token_budget(system_prompt, user_prompt, max_tokens or config.MAX_TOKENS, model)
+
     if api_type == "openai":
         return _retry(_call_openai_compatible,
             base_url, api_key, model,
@@ -316,6 +394,9 @@ def generate_stream(system_prompt: str, user_prompt: str,
         max_tokens = config.MAX_TOKENS
     provider = config.LLM_PROVIDER.lower()
     base_url, api_key, model, api_type = _get_provider_config(provider)
+
+    # Token 预算预检
+    check_token_budget(system_prompt, user_prompt, max_tokens or config.MAX_TOKENS, model)
 
     if api_type != "openai":
         # 非流式降级为普通生成

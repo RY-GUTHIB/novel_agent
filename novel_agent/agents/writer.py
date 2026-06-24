@@ -9,6 +9,7 @@ writer_agent.py - 章节写作 Agent
 
 import json
 import logging
+import os
 import re
 import config
 from pathlib import Path
@@ -36,9 +37,9 @@ from .prompts import (
 logger = logging.getLogger(__name__)
 
 # 预编译正则（伏笔提取）
-_FS_EXTRACT_1 = re.compile(r'\[FS:\s*([\u4e00-\u9fff][\u4e00-\u9fff\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]')
-_FS_EXTRACT_2 = re.compile(r'FS：\s*([\u4e00-\u9fff][\u4e00-\u9fff\s，。！？、；：""''（）…—0-9-]{1,}?)(?:\r?\n|$)')
-_FS_EXTRACT_3 = re.compile(r'\[FS：\s*([\u4e00-\u9fff][\u4e00-\u9fff\s，。！？、；：""''（）…—0-9-]{1,}?)\s*\]')
+_FS_EXTRACT_1 = re.compile(r'\[FS:\s*([\u4e00-\u9fff][\u4e00-\u9fff\s，。！？、；：""''（）…—0-9-]+?)\s*\]')
+_FS_EXTRACT_2 = re.compile(r'FS：\s*([\u4e00-\u9fff][\u4e00-\u9fff\s，。！？、；：""''（）…—0-9-]+?)(?:\r?\n|$)')
+_FS_EXTRACT_3 = re.compile(r'\[FS：\s*([\u4e00-\u9fff][\u4e00-\u9fff\s，。！？、；：""''（）…—0-9-]+?)\s*\]')
 
 
 class WriterAgent:
@@ -105,8 +106,8 @@ class WriterAgent:
             raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
                                   temperature=temperature, max_tokens=config.MAX_TOKENS)
 
-        # 4. 解析：分离正文，统一走后端补充提取
-        content, _ = self._split_output_and_settings(raw_output)
+        # 4. 解析：剥离 PRE_FLIGHT_CHECK，取纯正文
+        content = self._split_output_and_settings(raw_output)
 
         # DEBUG: 打印原始返回内容（便于排查 LLM 返回过短问题）
         logger.debug("LLM raw_output (前500字): %s", raw_output[:500] if raw_output else "(空)")
@@ -149,7 +150,7 @@ class WriterAgent:
         raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
                               temperature=temperature, max_tokens=config.MAX_TOKENS)
 
-        content, _ = self._split_output_and_settings(raw_output)
+        content = self._split_output_and_settings(raw_output)
 
         # 统一走补充提取
         settings_json = self._supplementary_extract_settings(content, chapter, title, characters)
@@ -216,7 +217,7 @@ class WriterAgent:
         )
 
         raw_output = generate(system_prompt=system_prompt, user_prompt=user_prompt,
-                              temperature=0.2, max_tokens=2048)
+                              temperature=0.2, max_tokens=4096)
 
         # 解析修改后的段落并替换
         revised_paras = [p.strip() for p in raw_output.split("---") if p.strip()]
@@ -241,8 +242,6 @@ class WriterAgent:
         )
         rag_context = self._get_rag_context(chapter, title, summary, characters)
 
-        # 上一章结尾钩子
-        prev_chapter_ending = self._get_prev_chapter_ending(chapter)
         # 前章全文参考
         prev_chapters_content = self._get_prev_chapters_content(chapter)
         # 风格锚点
@@ -253,13 +252,12 @@ class WriterAgent:
         
         # 构建状态快照（含承诺清单，从 continuity 取时间线事件）
         timeline_events = self.continuity.timeline if self.continuity else None
-        state_snapshot = self.memory.build_state_snapshot(chapter, characters, timeline_events)
+        state_snapshot = self.memory.build_state_snapshot(chapter, characters, timeline_events, chapter_summary=summary)
         
         return CHAPTER_WRITER_USER_PROMPT.format(
             chapter=chapter, title=title, summary=summary,
             time_tag=time_tag, location=location, characters="、".join(characters),
             generation_contract=generation_contract,
-            prev_chapter_ending=prev_chapter_ending,
             prev_chapters_content=prev_chapters_content,
             style_prompt=style_prompt,
             logic_constraints=logic_constraints,
@@ -303,7 +301,7 @@ class WriterAgent:
 
     def _auto_check_tasks(self, content: str, chapter: int):
         """关键词检测：活跃任务是否可能在本章被自然完成（仅告警，不自动标记）"""
-        active = self.memory.get_active_tasks(current_chapter=chapter, limit=20)
+        active = self.memory.get_active_tasks(current_chapter=chapter)
         kw_pattern = re.compile(r'[\u4e00-\u9fff]{3,10}')
         for task in active:
             text = f"{task.name} {task.description}"
@@ -351,22 +349,7 @@ class WriterAgent:
         print(f"  [OK] 去AI改写完成，原版备份: {backup_path.name}")
         return raw
 
-    def _get_prev_chapter_ending(self, chapter: int) -> str:
-        """读取上一章最后 200 字，用于钩子衔接"""
-        if chapter <= 1:
-            return "（这是第一章，无上一章）"
-        prev_chapter = chapter - 1
-        out_dir = self.ctx.chapters_dir
-        prev_path = out_dir / f"chapter_{prev_chapter:03d}.md"
-        if prev_path.exists():
-            with open(prev_path, "r", encoding="utf-8") as f:
-                text = f.read()
-            # 取最后 200 字
-            ending = text[-200:] if len(text) > 200 else text
-            return f"（上一章结尾：...{ending.strip()}）"
-        return "（上一章文件不存在）"
-
-    def _get_prev_chapters_content(self, chapter: int, max_chapters: int = 2, max_chars_per: int = 2400) -> str:
+    def _get_prev_chapters_content(self, chapter: int, max_chapters: int = 3, max_chars_per: int = 3000) -> str:
         """读取前 N 章内容，用于写作参考（过渡自然 + 防上下文冲突）"""
         if chapter <= 1:
             return "（这是第一章，无前章内容）"
@@ -383,11 +366,10 @@ class WriterAgent:
                 text = f.read()
             # 去掉 Markdown 标题行（第X章 XXX）
             content_only = re.sub(r'^# .+?\n', '', text, count=1).strip()
-            # 截断超长章节，保留首尾关键内容
+            # 全文保留但按 max_chars_per 截断
             if len(content_only) > max_chars_per:
-                head = content_only[:max_chars_per // 2]
-                tail = content_only[-(max_chars_per // 2):]
-                content_only = head + "\n\n...（中间省略）...\n\n" + tail
+                content_only = content_only[:max_chars_per] + f"\n\n...（第{prev}章截断，保留前{max_chars_per}字）"
+                logger.debug("第%d章正文 %d 字，截断至 %d 字", prev, len(text), max_chars_per)
             parts.append(f"### 第{prev}章\n{content_only}")
         if not parts:
             return "（前章文件不存在）"
@@ -517,21 +499,21 @@ class WriterAgent:
             plot_rules_text=self.memory.get_active_rules_prompt(),
             character_knowledge_text=self.memory.get_character_knowledge_prompt(chapter=chapter),
         )
-        prev_chapter_ending = self._get_prev_chapter_ending(chapter)
+        prev_chapter_content = self._get_prev_chapters_content(chapter, max_chapters=1)
         style_prompt = self.memory.get_style_prompt()
         if not logic_constraints:
             logic_constraints = "（无特殊逻辑约束）"
 
         # 构建状态快照（含承诺清单，从 continuity 取时间线事件）
         timeline_events = self.continuity.timeline if self.continuity else None
-        state_snapshot = self.memory.build_state_snapshot(chapter, characters, timeline_events)
+        state_snapshot = self.memory.build_state_snapshot(chapter, characters, timeline_events, chapter_summary=summary)
 
         return CHAPTER_REVISER_USER_PROMPT.format(
             chapter=chapter, title=title, review_report=review_report,
             original_content=original_content, summary=summary,
             time_tag=time_tag, location=location, characters="、".join(characters),
             generation_contract=generation_contract,
-            prev_chapter_ending=prev_chapter_ending,
+            prev_chapter_content=prev_chapter_content,
             style_prompt=style_prompt,
             logic_constraints=logic_constraints,
             continuity_prompt=continuity_prompt,
@@ -557,14 +539,16 @@ class WriterAgent:
 
             # 维度1：章节大纲+人物（原有）
             rag_query = f"{title} {summary} {' '.join(characters)}"
-            results = self.rag.search(rag_query, filter_chapter_lt=chapter, top_k=3)
+            results = self.rag.search(rag_query, filter_chapter_lt=chapter,
+                                      filter_chapter_gte=max(1, chapter - 30), top_k=5)
             all_results.extend(results)
 
             # 维度2：各角色近期言行（防止物品重复交付、对话重复等）
-            for char in characters[:3]:  # 只检索前3个主要角色
+            for char in characters[:5]:
                 char_results = self.rag.search(
-                    f"{char} 给了 递给 交给 获得 拿到 得到 发生 说了",
-                    filter_chapter_lt=chapter, top_k=2
+                    f"{char} 给了 递给 交给 获得 拿到 发生 说了",
+                    filter_chapter_lt=chapter,
+                    filter_chapter_gte=max(1, chapter - 30), top_k=10
                 )
                 all_results.extend(char_results)
 
@@ -582,10 +566,10 @@ class WriterAgent:
 
             if unique_results:
                 parts = []
-                for r in unique_results[:8]:  # 最多8条，避免prompt过长
+                for r in unique_results:
                     meta = r.get("metadata", {})
                     ch = meta.get("chapter", "?")
-                    parts.append(f"  [第{ch}章片段] {r['document'][:300]}")
+                    parts.append(f"  [第{ch}章片段] {r['document'][:500]}")
                 context_str = "## 🔍 前文相关片段（RAG检索，请据此避免重复情节）\n" + "\n---\n".join(parts)
                 logger.debug("RAG 注入内容 (前500字): %s", context_str[:500])
                 return context_str
@@ -603,10 +587,17 @@ class WriterAgent:
         确保错误内容不会被写入数据层。
         以后有新的设定回写需求，统一加在这个方法里。
 
-        注意：先保存章节文件到磁盘（第0步），再回写设定和事件，
-        防止中途崩溃导致时间线事件存在但章节文件丢失。
+        注意：先将章节写入临时文件，所有数据更新成功后再重命名为正式文件。
+        防止中途崩溃导致章节文件存在但时间线/伏笔等数据丢失。
         """
-        self.save_chapter(chapter, title, content)
+        out_dir = Path(self.ctx.output_dir)
+        chapters_dir = out_dir / "chapters"
+        chapters_dir.mkdir(parents=True, exist_ok=True)
+        chapter_path = chapters_dir / f"chapter_{chapter:03d}.md"
+        tmp_path = chapter_path.with_suffix(".md.tmp")
+
+        # 先写入临时文件（数据更新成功后 rename）
+        tmp_path.write_text(f"# 第{chapter}章 {title}\n\n{content}", encoding="utf-8")
 
         # 0. 契约校验（最终版本校验）
         parsed = None
@@ -661,21 +652,20 @@ class WriterAgent:
                 self.memory.update_character_status(char, notes=f"第{chapter}章出现于{location}")
         self.continuity.save_all()
 
-        # 3. 伏笔提取/回收（统一管线：正则显式 + LLM 隐式 + 融合去重）
+        # 3. 伏笔提取/回收（统一管线：正则显式 + 设定提取隐式 + 融合去重）
         explicit_fs = self._extract_foreshadows(content, chapter)
-        if config.FORESHADOW_DEEP_SCAN_INTERVAL > 0 and chapter % config.FORESHADOW_DEEP_SCAN_INTERVAL == 0:
-            implicit_fs = self._scan_implicit_foreshadows(content)
-        else:
-            implicit_fs = []
-        all_fs = self._merge_foreshadows(explicit_fs, implicit_fs, chapter)
+        settings_fs = parsed.get("foreshadows", []) if isinstance(parsed, dict) else []
+        all_fs = self._merge_foreshadows(explicit_fs, settings_fs, chapter)
         fs_planted = 0
         for fs in all_fs:
+            if self.foreshadow.exists(fs["content"]):
+                continue
             self.foreshadow.plant(
                 chapter=chapter, content=fs["content"],
                 type=fs.get("type", "mystery"),
                 related_characters=fs.get("related_characters", []),
                 related_items=fs.get("related_items", []),
-                planted_how=f"第{chapter}章{'显式标记' if fs.get('source') == 'explicit' else '隐式扫描'}",
+                planted_how=f"第{chapter}章{fs.get('source', '设定提取')}",
                 importance=fs.get("importance", 2),
             )
             fs_planted += 1
@@ -687,8 +677,8 @@ class WriterAgent:
         if parsed and isinstance(parsed, dict):
             task_count = len(parsed.get("tasks", []))
         logger.info(
-            "第%d章 提取统计：伏笔 显式 %d 条 / 隐式 %d 条 / 合计 %d 条 | 已回收 %d 个 | 任务 %d 条",
-            chapter, len(explicit_fs), len(implicit_fs), fs_planted, resolved_count, task_count,
+            "第%d章 提取统计：伏笔 %d 条 | 已回收 %d 个 | 任务 %d 条",
+            chapter, fs_planted, resolved_count, task_count,
         )
 
         # 4. 任务自动完成检测（关键词级，仅告警不自动标记）
@@ -712,6 +702,22 @@ class WriterAgent:
             self.continuity.enhance_character_location(content, chapter)
         except Exception as e:
             print(f"  [WARN] 位置扫描异常: {e}")
+
+        # 7. 风格漂移检测
+        try:
+            from novel_agent.core.style_detector import StyleDetector
+            if not hasattr(self, '_style_detector'):
+                self._style_detector = StyleDetector(str(self.ctx.data_dir))
+            self._style_detector.add_chapter(chapter, content)
+            drift_prompt = self._style_detector.get_drift_prompt()
+            if "⚠️" in drift_prompt or "🔴" in drift_prompt:
+                print(f"  {drift_prompt}")
+        except Exception as e:
+            logger.warning("风格漂移检测异常: %s", e)
+
+        # 所有数据更新成功，原子重命名
+        if tmp_path.exists():
+            os.replace(str(tmp_path), str(chapter_path))
 
     def review_loop(self, reviewer, chapter, title, content, summary, time_tag, location, characters, settings_json=None, logic_constraints=""):
         max_revisions = config.MAX_REVIEW_REVISIONS
@@ -786,6 +792,22 @@ class WriterAgent:
         if last_report and last_report.get("raw_text"):
             self._extract_review_action_items(last_report["raw_text"], chapter, title)
 
+        # 自动记录审校问题到修正历史（去重），避免同类问题重复出现
+        if last_report and last_report.get("issues"):
+            for iss in last_report["issues"]:
+                severity = iss.get("severity", "")
+                desc = iss.get("description", "").strip()
+                if not desc:
+                    continue
+                if severity in ("高", "中"):
+                    self.memory.add_correction(
+                        chapter=chapter,
+                        issue_type="review",
+                        issue=f"{severity}严重·{desc[:200]}",
+                        fix="审校循环中已自动修复",
+                        source="auto",
+                    )
+
         return content, settings_json
 
     # ========== 审校报告解析 ==========
@@ -811,7 +833,7 @@ class WriterAgent:
 
         user_prompt = (
             f"## 审校报告（第{chapter}章《{title}》）\n"
-            f"{report_text[:4000]}\n\n"
+            f"{report_text}\n\n"
             f"## 输出格式（严格 JSON，不要其他内容）\n"
             f'{{"tasks": [{{"name": "任务名（简短）", "description": "具体描述", '
             f'"related_characters": ["角色名"], "related_items": []}}],\n'
@@ -826,7 +848,7 @@ class WriterAgent:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 temperature=0.2,
-                max_tokens=2048,
+                max_tokens=8192,
             )
             result = parse_json(raw)
             if not isinstance(result, dict):
@@ -840,7 +862,7 @@ class WriterAgent:
                 self.memory.add_task(TaskProfile(
                     id=task_id,
                     name=t.get("name", "未命名任务")[:50],
-                    description=t.get("description", "")[:200],
+                    description=t.get("description", "")[:500],
                     chapter_created=chapter,
                     related_characters=t.get("related_characters", []),
                     related_items=t.get("related_items", []),
@@ -851,7 +873,7 @@ class WriterAgent:
             for fs in result.get("foreshadows", []):
                 self.foreshadow.plant(
                     chapter=chapter,
-                    content=fs.get("content", "")[:200],
+                    content=fs.get("content", "")[:500],
                     type=fs.get("type", "mystery"),
                     related_characters=fs.get("related_characters", []),
                     related_items=fs.get("related_items", []),
@@ -875,37 +897,65 @@ class WriterAgent:
 
     # ========== 输出解析 ==========
 
-    def _split_output_and_settings(self, raw_output: str) -> tuple:
-        """从 LLM 输出中分离正文和设定 JSON，同时剥离 PRE_FLIGHT_CHECK 自检段。
-        LLM 输出结构：===PRE_FLIGHT_CHECK=== → 自检 → 正文 → ===SETTINGS_JSON=== → JSON
+    def _split_output_and_settings(self, raw_output: str) -> str:
+        """从 LLM 输出中剥离 PRE_FLIGHT_CHECK 自检段，返回纯正文。
+        设定提取已统一走 _supplementary_extract_settings，不依赖 LLM 输出的 SETTINGS_JSON。
         """
         flight_marker = "===PRE_FLIGHT_CHECK==="
-        settings_marker = "===SETTINGS_JSON==="
+        # 兜底：匹配 PRE_FLIGHT_CHECK 自检段（LLM 可能省略标记直接输出内容）
+        flight_regex = re.compile(
+            r'^.*?###\s*硬约束.*?'
+            r'(?:✅\s*全部通过，开始正文|✅\s*全部通过)\s*'
+            r'(?:\n|---)',
+            re.DOTALL,
+        )
 
         text = raw_output
 
-        # 剥离 PRE_FLIGHT_CHECK 段：取 flight_marker 之后的内容
+        # 剥离 PRE_FLIGHT_CHECK 段：优先用标记，回退正则
         if flight_marker in text:
             _, after_flight = text.split(flight_marker, 1)
             text = after_flight
-
-        # 从剩余文本中分离正文和 settings JSON
-        if settings_marker in text:
-            content_part, _, settings_text = text.partition(settings_marker)
-            settings_text = settings_text.strip()
-            settings_text = re.sub(r'^```json\s*', '', settings_text)
-            settings_text = re.sub(r'\s*```$', '', settings_text)
-            settings_json = parse_json(settings_text)
-            if settings_json:
-                logger.info("正文 %d 字，设定 JSON 解析成功", len(content_part.strip()))
-                return content_part.strip(), settings_json
-            else:
-                self._save_failed_settings(settings_text)
-                logger.warning("正文 %d 字，设定 JSON 解析失败，已保存原始文本到 debug_settings.txt", len(content_part.strip()))
-                return content_part.strip(), None
         else:
-            logger.info("未找到 SETTINGS_JSON 分隔符，正文 %d 字", len(text.strip()))
-            return text.strip(), None
+            m = flight_regex.match(text)
+            if m:
+                text = text[m.end():]
+
+        # 去掉残留的 SETTINGS_JSON 段（如果 LLM 还输出的话）
+        settings_marker = "===SETTINGS_JSON==="
+        if settings_marker in text:
+            text, _, _ = text.partition(settings_marker)
+
+        text = self._clean_content(text)
+        return text.strip()
+
+    def _clean_content(self, text: str) -> str:
+        """二次清理正文：去掉残留的自检或修复确认内容行"""
+        lines = text.split('\n')
+        cleaned = []
+        in_check = False
+        for line in lines:
+            stripped = line.strip()
+            # 检测自检段开始标记（初始写章格式）
+            if re.match(r'^###\s*(硬约束|写作中注意)', stripped):
+                in_check = True
+                continue
+            # 检测修复确认段开始标记（修订格式）
+            if re.match(r'^修复确认', stripped):
+                in_check = True
+                continue
+            if in_check:
+                # 自检段内的行：🔴 🟡 ✅ ⚠️ 开头，或 "- ✅" 修订项，或空行
+                if re.match(r'^[🔴🟡✅⚠️]', stripped):
+                    continue
+                if re.match(r'^- ✅', stripped):
+                    continue
+                if stripped == '':
+                    continue
+                # 遇到非自检内容，退出自检模式
+                in_check = False
+            cleaned.append(line)
+        return '\n'.join(cleaned)
 
     def _save_failed_settings(self, settings_text: str):
         """保存解析失败的 SETTINGS_JSON 原始文本，方便排查问题"""
@@ -962,7 +1012,7 @@ class WriterAgent:
         try:
             raw = generate(
                 system_prompt=system_prompt, user_prompt=user_prompt,
-                temperature=0.3, max_tokens=4096,
+                temperature=0.3, max_tokens=8192,
             )
             settings = parse_json(raw)
             if settings:
@@ -998,7 +1048,7 @@ class WriterAgent:
             system=FORESHADOW_SCAN_SYSTEM_PROMPT,
             user=prompt,
             temperature=0.1,
-            max_tokens=1000,
+            max_tokens=2048,
         )
         if not raw:
             return []
@@ -1013,7 +1063,7 @@ class WriterAgent:
             logger.warning("隐式伏笔扫描 LLM 返回非 JSON：%s", raw[:200])
             return []
 
-    def _call_llm(self, system: str, user: str, temperature: float = 0.1, max_tokens: int = 1000):
+    def _call_llm(self, system: str, user: str, temperature: float = 0.1, max_tokens: int = 2048):
         """统一 LLM 调用包装，用于隐式扫描等辅助调用"""
         try:
             return generate(system_prompt=system, user_prompt=user,
@@ -1022,8 +1072,7 @@ class WriterAgent:
             logger.warning("LLM 辅助调用失败: %s", e)
             return None
 
-    def _merge_foreshadows(self, explicit: List[str], implicit: List[dict], chapter: int) -> List[dict]:
-        """融合显式 + 隐式伏笔，按 content 去重"""
+    def _merge_foreshadows(self, explicit: List[str], settings_fs: List[dict], chapter: int) -> List[dict]:
         seen = set()
         result = []
         for fs_text in explicit:
@@ -1031,13 +1080,15 @@ class WriterAgent:
             if normalized not in seen:
                 seen.add(normalized)
                 result.append({"content": fs_text, "type": "mystery", "importance": 2,
-                               "related_characters": [], "source": "explicit"})
-        for fs in implicit:
+                               "related_characters": [], "source": "显式标记"})
+        for fs in settings_fs:
             content = fs.get("content", "")
+            if not content:
+                continue
             normalized = re.sub(r'\s+', '', content)
-            if normalized and normalized not in seen:
+            if normalized not in seen:
                 seen.add(normalized)
-                fs["source"] = "implicit"
+                fs["source"] = "设定提取"
                 result.append(fs)
         return result
 

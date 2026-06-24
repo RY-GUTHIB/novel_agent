@@ -6,8 +6,10 @@ commands.py - CLI 命令实现
 
 import glob
 import json
+import math
 import re
 import sys
+import time
 from collections import namedtuple
 from pathlib import Path
 
@@ -91,6 +93,15 @@ def create_new_project() -> str:
     style = _input_choice("文风", NOVEL_STYLES)
     concept = _input_concept()
 
+    # 询问目标卷数
+    vol_default = _detect_volumes_from_concept(concept)
+    vol_prompt = f"📊 创意中共规划了多少卷？（检测到 {vol_default} 卷，回车默认）：" if vol_default else "📊 创意中共规划了多少卷？（回车默认5）："
+    vol_input = input(f"\n{vol_prompt}").strip()
+    if vol_input.isdigit():
+        total_volumes = int(vol_input)
+    else:
+        total_volumes = vol_default or 5
+
     project_dir = create_project(name, novel_type, style, concept)
     set_current_project(name)
 
@@ -101,15 +112,27 @@ def create_new_project() -> str:
     _create_project_memory(name, str(ctx.data_dir))
     print(f"   类型：{novel_type} | 风格：{style}")
     print(f"   目录：{project_dir}")
+    if total_volumes > 5:
+        print(f"   目标：{total_volumes} 卷（将自动循环扩展）")
 
     gen_outline = input("\n🤖 是否立即生成大纲？(Y/n)：").strip().lower()
     if gen_outline != "n":
         config.set_project(name)
         memory, continuity, foreshadow, rag = init_services()
         check_api_key()
-        generate_outline(memory, continuity, foreshadow, name, novel_type, style, concept)
+        name = generate_outline(memory, continuity, foreshadow, name, novel_type, style, concept,
+                                total_volumes=total_volumes) or name
 
     return name
+
+
+def _detect_volumes_from_concept(concept: str) -> int:
+    """从创意文本中探测卷数（如 '86卷'、'86 卷'、'八十六卷'）"""
+    import re
+    matches = re.findall(r'(\d+)\s*卷', concept)
+    if matches:
+        return max(int(m) for m in matches)
+    return 0
 
 
 def _input_project_name() -> str:
@@ -143,11 +166,11 @@ def _input_choice(label: str, options: list) -> str:
 
 def _input_concept(retries: int = 3) -> str:
     print(f"\n💡 说说你的总体构思（可以是一句话，也可以是几段描述）：")
-    print("   （输入空行结束）")
+    print("   （输入 .end 单独一行结束）")
     lines = []
     while True:
         line = input("   ")
-        if not line:
+        if line.strip() == ".end":
             break
         lines.append(line)
     concept = "\n".join(lines)
@@ -180,7 +203,22 @@ def init_services(ctx: config.ProjectContext = None):
     )
 
 
-def generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept, ctx=None, gui_mode=False):
+def generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept,
+                     ctx=None, gui_mode=False, total_volumes=None):
+    # 主角名输入
+    cfg = load_project_config(project_name)
+    current_main = cfg.get("main_character", "")
+    if current_main:
+        inp = input(f"\n🧑 主角名（当前：{current_main}，回车不变）：").strip()
+        if inp and inp != current_main:
+            cfg["main_character"] = inp
+            save_project_config(project_name, cfg)
+    else:
+        inp = input("\n🧑 谁是主角？（请键盘录入）：").strip()
+        if inp:
+            cfg["main_character"] = inp
+            save_project_config(project_name, cfg)
+
     print("\n🤖 正在调用 LLM 生成大纲，请稍候（约1-2分钟）...")
     ctx = ctx or config.get_project_context()
     planner = PlannerAgent(memory, continuity, foreshadow, ctx=ctx)
@@ -188,7 +226,6 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
         outline = planner.generate_outline(concept, genre=genre, style=style)
         planner.save_outline_json(outline)
         memory.outline = outline
-        memory._rebuild_chapter_days()
 
         # 初始化物品状态追踪（方案1+2+5：从大纲中提取 key_items）
         key_items = outline.get("key_items", [])
@@ -228,20 +265,52 @@ def generate_outline(memory, continuity, foreshadow, project_name, genre, style,
                     project_name = title
                     print(f"   ✅ 已重命名为「{title}」")
 
-        # 统计章节数（兼容 volumes 格式和新旧字段名）
+        # 统计章节数
         chapter_count = len(_get_chapter_plan(outline))
-        if chapter_count == 0 and 'volumes' in outline:
-            chapter_count = sum(len(v.get('chapters', v.get('chapter_plan', []))) for v in outline['volumes'])
         vol_count = len(outline.get('volumes', []))
-        vol_info = f"（{vol_count}卷）" if vol_count else ""
+        print(f"\n✅ 初始大纲完成（{vol_count} 卷，约 {chapter_count} 章）")
 
-        print(f"\n✅ 大纲生成完成！")
-        print(f"   标题：{title}")
-        print(f"   人物：{len(outline.get('characters', []))} 个")
-        print(f"   地点：{len(outline.get('locations', []))} 个")
-        print(f"   规划章节：{chapter_count} 章{vol_info}")
+        # 自动循环扩展至目标卷数
+        if total_volumes and total_volumes > vol_count:
+            # 记录目标卷数到 config（中断后可续跑）
+            cfg = load_project_config(project_name)
+            cfg["target_volumes"] = total_volumes
+            save_project_config(project_name, cfg)
+
+            total_rounds = math.ceil((total_volumes - vol_count) / 3)
+            print(f"\n🔄 自动扩展大纲至 {total_volumes} 卷（共 {total_rounds} 轮，每轮 3 卷）...")
+            loop_start = time.time()
+            try:
+                round_num = 0
+                while len(outline.get("volumes", [])) < total_volumes:
+                    round_num += 1
+                    current = len(outline["volumes"])
+                    remaining = total_volumes - current
+                    n = min(config.DEFAULT_VOLUMES_PER_ROUND, remaining)
+                    elapsed = time.time() - loop_start
+                    elapsed_str = f"{int(elapsed//60):02d}:{int(elapsed%60):02d}"
+                    avg = elapsed / round_num
+                    remaining_est = avg * (total_rounds - round_num)
+                    rem_str = f"{int(remaining_est//60):02d}:{int(remaining_est%60):02d}"
+                    print(f"  [{round_num}/{total_rounds}] 已用 {elapsed_str}，预计剩余 {rem_str} | 扩展第 {current+1}-{current+n} 卷 ...")
+                    outline, actual = planner.extend_outline(
+                        outline, volumes_to_add=n, concept=concept,
+                    )
+                    memory.outline = outline
+                    print(f"  ✅ 当前共 {len(outline['volumes'])} 卷")
+                update_project_progress(project_name, outline=outline)
+                total_elapsed = time.time() - loop_start
+                print(f"\n✅ 全部完成！共 {len(outline['volumes'])} 卷（耗时 {int(total_elapsed//60):02d}:{int(total_elapsed%60):02d}）")
+            except KeyboardInterrupt:
+                update_project_progress(project_name, outline=outline)
+                elapsed = time.time() - loop_start
+                print(f"\n  ⏸️ 用户中断（已运行 {int(elapsed//60):02d}:{int(elapsed%60):02d}），当前共 {len(outline['volumes'])} 卷（已保存）")
+        else:
+            print(f"\n✅ 大纲生成完成！（{vol_count} 卷，{chapter_count} 章）")
+        return project_name
     except Exception as e:
         print(f"❌ 大纲生成失败：{e}")
+        return project_name
 
 
 # =========== 命令实现 ===========
@@ -269,7 +338,7 @@ def cmd_new(memory, continuity, foreshadow, rag, project_name):
         save_project_config(project_name, cfg)
 
     check_api_key()
-    generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept)
+    return generate_outline(memory, continuity, foreshadow, project_name, genre, style, concept) or project_name
 
 
 def cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=None, chapter=None):
@@ -282,7 +351,6 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=None, chapt
     with open(outline_path, "r", encoding="utf-8") as f:
         outline = json.load(f)
     memory.outline = outline
-    memory._rebuild_chapter_days()
 
     chapter_plan = _get_chapter_plan(outline)
     if not chapter_plan:
@@ -290,8 +358,16 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=None, chapt
         return
 
     if chapter is None:
-        existing = glob.glob(str(ctx.chapters_dir / "chapter_*.md"))
-        chapter = len(existing) + 1
+        existing = sorted(glob.glob(str(ctx.chapters_dir / "chapter_*.md")))
+        if existing:
+            nums = []
+            for p in existing:
+                m = re.search(r'chapter_(\d+)', p)
+                if m:
+                    nums.append(int(m.group(1)))
+            chapter = max(nums) + 1 if nums else 1
+        else:
+            chapter = 1
 
     ch_data = next((c for c in chapter_plan if c.get("chapter") == chapter), None)
     if ch_data is None:
@@ -360,9 +436,9 @@ def cmd_write(memory, continuity, foreshadow, rag, project_name, ctx=None, chapt
 
         # 审校循环（finalize_chapter 会在循环结束后自动保存章节文件）
         content, settings_json = writer.review_loop(reviewer, chapter=chapter, title=title, content=content,
-                                                       summary=summary, time_tag=time_tag, location=location,
-                                                       characters=characters, settings_json=settings_json,
-                                                       logic_constraints=logic_constraints)
+                                                        summary=summary, time_tag=time_tag, location=location,
+                                                        characters=characters, settings_json=settings_json,
+                                                        logic_constraints=logic_constraints)
 
         update_project_progress(project_name, chapters_written=chapter)
         rebuild_novel_md(ctx.output_dir)
@@ -404,8 +480,6 @@ def _get_chapter_plan(outline: dict) -> list:
             return chapters
     # 旧格式：顶层 chapter_plan
     return outline.get("chapter_plan", [])
-
-
 
 
 
@@ -495,6 +569,28 @@ def cmd_status(memory, continuity, foreshadow, rag, project_name, ctx=None):
     print(f"\n时间线事件：{len(continuity.timeline)} 条")
     print(f"地点数量：{len(memory.locations)} 个")
 
+    # 风格漂移检测
+    try:
+        from novel_agent.core.style_detector import StyleDetector
+        sd = StyleDetector(str(ctx.data_dir))
+        drift = sd.get_latest_drift()
+        if drift > 0.15:
+            tag = "🔴" if drift > 0.25 else "⚠️"
+            print(f"风格漂移指数：{drift:.2f} {tag}")
+        else:
+            print(f"风格漂移指数：{drift:.2f} ✅")
+    except Exception:
+        pass
+
+    # 人物成长弧概要
+    try:
+        arcs = memory.arc_tracker.export_all()
+        if arcs:
+            chars_with_arcs = {a["character"] for a in arcs}
+            print(f"人物成长弧：{len(arcs)} 个事件，涉及 {len(chars_with_arcs)} 人")
+    except Exception:
+        pass
+
 
 def cmd_add_fs(memory, continuity, foreshadow, rag, project_name):
     print("\n=== 手动添加伏笔 ===")
@@ -553,7 +649,7 @@ def cmd_de_ai(memory, continuity, foreshadow, rag, project_name, ctx=None):
     chapter_num = int(Path(last_path).stem.split("_")[1])
     with open(last_path, "r", encoding="utf-8") as f:
         content = f.read()
-    writer = WriterAgent(memory, continuity, foreshadow, rag, ctx)
+    writer = WriterAgent(memory, continuity, foreshadow, ctx, rag_store=rag)
     print(f"  [进展] 正在对第{chapter_num}章做去AI改写...")
     rewritten = writer.de_ai_rewrite(chapter_num, content)
     if rewritten:
@@ -622,6 +718,75 @@ def cmd_resolve_fs(memory, continuity, foreshadow, rag, project_name):
         print("已取消")
 
 
+def cmd_extend(memory, continuity, foreshadow, rag, project_name, ctx=None, volumes=config.DEFAULT_VOLUMES_PER_ROUND):
+    """扩展大纲：在当前大纲末尾追加新卷（支持1000+章的循环扩展）"""
+    ctx = ctx or config.get_project_context()
+    outline_path = ctx.data_dir / "outline.json"
+    if not outline_path.exists():
+        print("❌ 未找到大纲文件，请先运行：python main.py new")
+        return
+
+    with open(outline_path, "r", encoding="utf-8") as f:
+        outline = json.load(f)
+
+    cfg = load_project_config(project_name)
+    concept = cfg.get("concept", "")
+
+    current_vols = len(outline.get("volumes", []))
+    all_chapters = _get_chapter_plan(outline)
+    total_chs = len(all_chapters)
+    last_ch = all_chapters[-1]["chapter"] if all_chapters else 0
+
+    target = cfg.get("target_volumes", 0)
+    auto_mode = False
+    if target and current_vols < target and volumes == config.DEFAULT_VOLUMES_PER_ROUND:
+        gap = target - current_vols
+        auto_vols = min(config.DEFAULT_VOLUMES_PER_ROUND, gap)
+        print(f"\n📐 检测到预设目标 {target} 卷，当前 {current_vols} 卷（相差 {gap} 卷）")
+        cont = input(f"   是否自动续跑至 {target} 卷（本次追加 {auto_vols} 卷）？(Y/n)：").strip().lower()
+        auto_mode = (cont != "n")
+        if auto_mode:
+            volumes = auto_vols
+
+    print(f"\n=== 扩展大纲 ===")
+    print(f"当前：{current_vols} 卷，{total_chs} 章（至第 {last_ch} 章）")
+    print(f"新增：{volumes} 卷（约 {volumes * 25} 章）")
+
+    check_api_key()
+
+    planner = PlannerAgent(memory, continuity, foreshadow, ctx=ctx)
+    round_num = 0
+    while True:
+        round_num += 1
+        print(f"\n--- 第 {round_num} 轮扩展开始（+{volumes} 卷）---")
+        try:
+            new_outline, actual = planner.extend_outline(
+                outline, volumes_to_add=volumes, concept=concept,
+            )
+            new_vols = len(new_outline.get("volumes", []))
+            new_chs = len(_get_chapter_plan(new_outline))
+            print(f"\n✅ 大纲扩展完成！")
+            print(f"   现在共 {new_vols} 卷，{new_chs} 章")
+            print(f"   大纲文件：{outline_path}")
+
+            if target and new_vols < target:
+                remaining = target - new_vols
+                if not auto_mode:
+                    cont = input(f"\n📐 还差 {remaining} 卷到 {target} 卷，继续扩展？(Y/n)：").strip().lower()
+                    if cont == "n":
+                        break
+                else:
+                    print(f"📐 还差 {remaining} 卷到 {target} 卷，自动继续...")
+                volumes = min(config.DEFAULT_VOLUMES_PER_ROUND, remaining)
+                outline = new_outline
+                print(f"新增：{volumes} 卷（约 {volumes * 25} 章）")
+                continue
+            break
+        except Exception as e:
+            print(f"❌ 大纲扩展失败：{e}")
+            break
+
+
 def cmd_list():
     projects = list_projects()
     if not projects:
@@ -639,6 +804,44 @@ def cmd_list():
     print(f"项目目录：{config.PROJECTS_ROOT}")
 
 
+def cmd_set_main_char(memory, continuity, foreshadow, rag, project_name):
+    print("\n=== 手动设置主角 ===")
+    names = sorted(memory.characters.keys())
+    if not names:
+        print("❌ 当前无角色数据（请先生成大纲）")
+        return
+
+    print("现有角色：")
+    for i, name in enumerate(names, 1):
+        tag = " ⬅️ 当前主角" if name == memory.main_character else ""
+        print(f"  {i}. {name}{tag}")
+
+    choice = input("\n输入编号或角色名（留空取消）：").strip()
+    if not choice:
+        print("已取消")
+        return
+
+    if choice.isdigit():
+        idx = int(choice) - 1
+        if 0 <= idx < len(names):
+            selected = names[idx]
+        else:
+            print(f"❌ 编号超出范围（1-{len(names)}）")
+            return
+    else:
+        if choice in memory.characters:
+            selected = choice
+        else:
+            print(f"❌ 角色「{choice}」不存在")
+            return
+
+    cfg = load_project_config(project_name)
+    cfg["main_character"] = selected
+    save_project_config(project_name, cfg)
+    memory.main_character = selected
+    print(f"\n✅ 主角已设为：{selected}")
+
+
 # =========== 交互循环 ===========
 
 def interactive_loop(project_name):
@@ -647,7 +850,7 @@ def interactive_loop(project_name):
 
     while True:
         print(f"\n📖 当前项目：《{project_name}》")
-        print("命令：write | review | viz | status | new | add-fs | resolve-fs | fs-map | de-ai | switch | list | quit")
+        print("命令：write | review | viz | status | new | extend | add-fs | resolve-fs | fs-map | de-ai | set-main-char | switch | list | quit")
         cmd = input(">>> ").strip().lower()
 
         if cmd in ("quit", "exit", "q"):
@@ -662,7 +865,13 @@ def interactive_loop(project_name):
         elif cmd == "status":
             cmd_status(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
         elif cmd == "new":
-            cmd_new(memory, continuity, foreshadow, rag, project_name)
+            new_name = cmd_new(memory, continuity, foreshadow, rag, project_name)
+            if new_name and new_name != project_name:
+                project_name = new_name
+                ctx = config.set_project(project_name)
+                memory, continuity, foreshadow, rag = init_services(ctx)
+        elif cmd == "extend":
+            cmd_extend(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
         elif cmd == "add-fs":
             cmd_add_fs(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "resolve-fs":
@@ -671,6 +880,8 @@ def interactive_loop(project_name):
             cmd_fs_map(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
         elif cmd == "de-ai":
             cmd_de_ai(memory, continuity, foreshadow, rag, project_name, ctx=ctx)
+        elif cmd == "set-main-char":
+            cmd_set_main_char(memory, continuity, foreshadow, rag, project_name)
         elif cmd == "switch":
             new_name = select_project()
             if new_name != project_name:
@@ -687,11 +898,13 @@ def interactive_loop(project_name):
   viz        - 生成可视化（时间线/人物关系/世界地图）
   status     - 显示当前进度
   new        - 重新生成大纲
+  extend     - 扩展大纲（追加新卷，支持1000+章）
   add-fs     - 手动添加伏笔
   resolve-fs - 手动回收/放弃伏笔
   fs-map     - 生成伏笔总览
-  de-ai      - 对最新章节做去AI味改写
-  switch     - 切换到其他小说项目
+   de-ai      - 对最新章节做去AI味改写
+   set-main-char - 手动设置主角
+   switch     - 切换到其他小说项目
   list       - 列出所有项目
   quit       - 退出
 """)

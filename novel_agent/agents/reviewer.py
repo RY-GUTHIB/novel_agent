@@ -79,6 +79,8 @@ class ReviewerAgent:
         first_appearance_text = "、".join(first_appearance_chars) if first_appearance_chars else "（无）"
 
         anti_ai_rules = self._build_anti_ai_rules()
+        arc_prompt = self.memory.get_all_arcs_prompt(up_to_chapter=chapter - 1)
+        calibration_prompt = self.memory.get_review_calibration_prompt(chapter)
         user_prompt = REVIEWER_USER_PROMPT.format(
             chapter=chapter, title=title, content=content,
             continuity_prompt=self.continuity.generate_continuity_prompt(
@@ -98,21 +100,36 @@ class ReviewerAgent:
             outline_context=self.memory.get_outline_context_prompt(chapter),
             anti_ai_rules=anti_ai_rules,
             first_appearance_info=first_appearance_text,
+            arc_prompt=arc_prompt or "（暂无成长弧数据）",
+            calibration_prompt=calibration_prompt,
         )
 
         response = generate(
             system_prompt=REVIEWER_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=temperature,
-            max_tokens=4096,
+            max_tokens=16384,
         )
 
-        return self._parse_review(response)
+        report = self._parse_review(response)
+
+        # 记录审校分数到历史（同 chapter 覆盖，只保留最后一次）
+        if report.get("scores"):
+            try:
+                self.memory.record_review_score(
+                    chapter=chapter,
+                    scores=report["scores"],
+                    overall=report.get("overall_score", 0),
+                )
+            except Exception as e:
+                logger.warning("审校分数记录失败: %s", e)
+
+        return report
 
     def _parse_review(self, text: str) -> Dict:
         scores = {}
         overall_score = 0
-        verdict = "需修改"
+        verdict = ""
 
         # 优先：从末尾 JSON 块解析
         json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
@@ -131,6 +148,9 @@ class ReviewerAgent:
                     "style_consistency": "风格一致性",
                     "fact_check": "事实一致性",
                     "ai_density": "AI疲劳词汇密度",
+                    "chapter_opening": "章首多样性",
+                    "dialogue_verbs": "对话动词密度",
+                    "sensory_diversity": "环境感官多样性",
                 }
                 for key, cn_name in field_map.items():
                     if key in parsed:
@@ -151,7 +171,7 @@ class ReviewerAgent:
         issues = []
         patches = []  # 定向修补用：{severity, description, location_keyword}
         # 匹配严重性标签：⚠️ [严重性：高] 或 ⚠️ 严重性：中
-        for severity, desc in re.findall(r'⚠️\s*\[?严重性\s*[：:]\s*(\S+?)\]?\s*\n?(.*?)(?=\n⚠️|\n\n|$)', text, re.MULTILINE | re.DOTALL):
+        for severity, desc in re.findall(r'⚠️\s*\[?严重性\s*[：:]\s*(\S+?)\]?\s*\n?(.*?)(?=\n⚠️|\n\n|$)', text, re.DOTALL):
             desc_clean = desc.strip()
             issues.append({"severity": severity, "description": desc_clean})
             # 提取定位关键词

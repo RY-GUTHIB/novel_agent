@@ -153,7 +153,7 @@ class LogicGuard:
         if not events:
             return ""
 
-        key_events = sorted(events, key=lambda x: -x.importance)[:15]
+        key_events = sorted(events, key=lambda x: -x.importance)[:30]
         lines = ["【已完成的关键事件（⚠️ 禁止重复这些情节）】"]
         for e in key_events:
             lines.append(f"  第{e.chapter}章：{e.event}")

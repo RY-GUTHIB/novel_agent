@@ -1,0 +1,7 @@
+text len=32
+text repr='⚠️ [严重性：高] 需要修改\n定位：关键词「不存在的关键词」\n'
+matches=1
+match 0: groups=2
+  group 0: '高'
+  group 1: '需要修改'
+without VS: matches=0

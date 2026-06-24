@@ -312,13 +312,12 @@ class ContinuityGuard(JsonRepositoryMixin):
             for e in recent_events:
                 lines.append(f"  第{e.chapter}章 [{e.time_tag}]：{e.event}（涉及：{', '.join(e.characters)}）")
 
-        # C方案：已完成关键事件列表（防止重复情节）
-        # 只保留最近20章的关键事件，更早的事件由RAG补充检索
-        min_chapter = max(1, chapter - 20)
+        # 已完成关键事件列表（防止重复情节）
+        min_chapter = max(1, chapter - 40)
         all_events = [e for e in self.timeline if min_chapter <= e.chapter < chapter]
         if all_events:
-            # 按重要性取 top 20 条
-            key_events = sorted(all_events, key=lambda x: -x.importance)[:20]
+            # 按重要性取 top 30 条
+            key_events = sorted(all_events, key=lambda x: -x.importance)[:30]
             lines.append("\n## ⚠️ 已发生的关键事件（禁止重复！）：")
             for e in key_events:
                 lines.append(f"  第{e.chapter}章：{e.event}")

@@ -1,19 +1,21 @@
 # novel_agent/requirements.txt
 # 核心依赖
-openai>=1.0.0          # DeepSeek/Qwen/Ollama 使用 OpenAI 兼容 API
-tiktoken>=0.7.0        # token 计数
-flet>=0.85.0           # GUI 框架
+python-dotenv>=1.0.0
+openai>=1.0.0
+tiktoken>=0.7.0
+numpy>=1.24.0
 
-# 向量数据库（RAG，可选）
+# RAG（如需向量检索，需确认 vendor/models/ 下模型文件存在）
 chromadb>=0.5.0
-rank_bm25>=0.2.0       # BM25 混合检索
+rank_bm25>=0.2.0
 
-# 嵌入模型推理（ONNX，轻量无 torch）
-# 模型已预置在 vendor/models/bge-small-zh-v1.5/onnx/ 下，离线可用
+# 嵌入模型推理（ONNX 后端，轻量无 torch）
 onnxruntime>=1.18.0
 tokenizers>=0.21.0
 
-# 其他 LLM 后端（按需安装）
+# 可选 LLM 后端（按需取消注释）
 # google-generativeai>=0.8.0  # Gemini
-# anthropic>=0.40.0            # Claude
-# ollama>=0.1.0                # 本地模型
+# anthropic>=0.40.0           # Claude
+
+# GUI（可选，需要 flet 运行时，约 50MB）
+# flet>=0.85.0

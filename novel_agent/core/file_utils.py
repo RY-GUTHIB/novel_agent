@@ -72,7 +72,7 @@ class JsonRepositoryMixin:
 
 # 中文数字映射表
 _CN_DIGIT_MAP = {
-    "零": 0, "一": 1, "二": 2, "三": 3, "四": 4,
+    "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
     "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
     "十": 10, "百": 100, "千": 1000,
 }
@@ -84,7 +84,11 @@ def parse_travel_time(time_str: str) -> float:
     if not time_str:
         return 0
     # "三日后""3日后""两日后"
-    m = re.search(r'([一二三四五六七八九十百零\d]+)\s*[日天]后', time_str)
+    m = re.search(r'([一两三四五六七八九十百零\d]+)\s*[日天]后', time_str)
+    if m:
+        return float(parse_chinese_number(m.group(1)))
+    # "第1天""第N天"（兼容 "炼气三层·第1天" 格式）
+    m = re.search(r'第\s*([\d零一二三四五六七八九十百千]+)\s*[日天]', time_str)
     if m:
         return float(parse_chinese_number(m.group(1)))
     # "2日""3日骑马""2天"（裸数字+日/天）
@@ -98,7 +102,7 @@ def parse_travel_time(time_str: str) -> float:
     if any(kw in time_str for kw in ["翌日", "次日", "第二天"]):
         return 1
     # "一个时辰后""两个时辰""3时辰"
-    m = re.search(r'([一二三四五六七八九十百零\d]+)\s*个?时辰', time_str)
+    m = re.search(r'([一两三四五六七八九十百零\d]+)\s*个?时辰', time_str)
     if m:
         return float(parse_chinese_number(m.group(1))) * 0.125
     # "片刻""少顷" — 忽略

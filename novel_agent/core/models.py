@@ -186,6 +186,19 @@ class TaskProfile:
     related_characters: List[str] = field(default_factory=list)
 
 
+# ============ 人物成长弧相关 ============
+
+@dataclass
+class ArcEvent:
+    """人物成长弧事件（追踪角色核心价值观/恐惧/缺陷的探索与变化）"""
+    character: str
+    chapter: int
+    element: str           # core_value / core_desire / core_fear / flaw
+    event_type: str        # explored / challenged / changed / resolved
+    description: str
+    new_value: str = ""
+
+
 # ============ 伏笔相关 ============
 
 @dataclass
@@ -256,13 +269,17 @@ class SettingsSchema:
     tasks: list = field(default_factory=list)
     timeline_events: list = field(default_factory=list)
     style: dict = field(default_factory=dict)
+    arc_events: list = field(default_factory=list)
+    summary: str = ""
+    foreshadows: list = field(default_factory=list)
 
     # 顶层字段列表，用于校验和生成
     FIELDS = [
         "characters", "world_settings", "sect_factions", "locations",
         "scene_events", "spatial_movements", "spacemap_updates",
         "plot_rules", "character_knowledge", "items", "tasks",
-        "timeline_events", "style",
+        "timeline_events", "style", "arc_events", "summary",
+        "foreshadows",
     ]
 
 
@@ -348,6 +365,18 @@ def generate_settings_json_example() -> str:
             "importance": 2, "season": "秋",
         }],
         "style": {},
+        "summary": "叶青云在天剑城外与血煞教正面交锋，重伤之下领悟破天剑意",
+        "arc_events": [{
+            "character": "叶青云",
+            "element": "flaw",
+            "event_type": "explored",
+            "description": "因自负低估血煞教实力，险些中伏",
+        }],
+        "foreshadows": [{
+            "content": "神秘铜钱上刻的古文似乎隐藏着什么秘密",
+            "type": "mystery", "importance": 3,
+            "related_characters": ["叶青云"],
+        }],
     }
     return json.dumps(example, ensure_ascii=False, indent=None)
 
