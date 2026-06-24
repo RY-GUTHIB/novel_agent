@@ -96,10 +96,21 @@ class ForeshadowTracker(JsonRepositoryMixin):
                 return
 
     def exists(self, content: str) -> bool:
+        """检查伏笔是否已存在（支持精确匹配 + 子串匹配）"""
         normalized = re.sub(r'\s+', '', content)
+        if len(normalized) < 4:
+            return any(re.sub(r'\s+', '', fs.content) == normalized for fs in self.foreshadows)
         for fs in self.foreshadows:
-            if re.sub(r'\s+', '', fs.content) == normalized:
+            fs_norm = re.sub(r'\s+', '', fs.content)
+            if fs_norm == normalized:
                 return True
+            if len(fs_norm) < 4:
+                continue
+            # 子串匹配：短的被长的包含，且重叠 >= 短串的 80%
+            shorter = min(len(normalized), len(fs_norm))
+            if shorter >= int(max(len(normalized), len(fs_norm)) * 0.8):
+                if normalized in fs_norm or fs_norm in normalized:
+                    return True
         return False
 
     def auto_resolve(self, content: str, chapter: int) -> int:
@@ -193,31 +204,85 @@ class ForeshadowTracker(JsonRepositoryMixin):
     def get_resolved_in_chapter(self, chapter: int) -> List[Foreshadow]:
         return [fs for fs in self.foreshadows if fs.chapter_resolved == chapter]
 
-    def generate_foreshadow_prompt(self, chapter: int) -> str:
-        pending = self.get_pending(before_chapter=chapter)
-        if not pending:
-            return "【伏笔追踪】当前无待回收伏笔。"
-        lines = ["【⚠️ 待回收伏笔提醒（生成本章时考虑兑现）】"]
-        # 过期伏笔警告（超过5章未回收）
-        expired = [fs for fs in pending if chapter - fs.chapter_planted > 5]
-        if expired:
-            lines.append(f"\n  🔴 过期伏笔（已超过5章未回收，强烈建议本章兑现！）：")
-            for fs in expired:
-                lines.append(
-                    f"    [{fs.id}] 第{fs.chapter_planted}章埋下（已过 {chapter - fs.chapter_planted} 章）\n"
-                    f"      内容：{fs.content[:80]}{'...' if len(fs.content) > 80 else ''}"
-                )
-        # 正常待回收
-        normal = [fs for fs in pending if fs not in expired]
-        if normal:
+    def generate_foreshadow_prompt(self, chapter: int,
+                                     outline_foreshadows: list = None) -> str:
+        lines = []
+
+        # === 大纲指定本章回收的伏笔（最高优先级，不展示未来章节） ===
+        if outline_foreshadows:
+            must_recover = []
+            for fs_data in outline_foreshadows:
+                if not isinstance(fs_data, dict):
+                    continue
+                harvest_ch = fs_data.get("harvest_chapter")
+                if not harvest_ch or harvest_ch != chapter:
+                    continue  # 不是本章该回收的，跳过
+                fs_id = fs_data.get("id", "")
+                content = fs_data.get("content", "")
+                # 查 tracker：是否真的被回收了
+                tracked = next((f for f in self.foreshadows if f.id == fs_id), None)
+                if tracked and tracked.status == "resolved":
+                    # 区分 planner 加载时的"假回收"和真正的回收
+                    if "自动回收" in (tracked.resolution or ""):
+                        must_recover.append((fs_id, content))
+                    # 真正回收了的跳过
+                    continue
+                # tracker 里找不到或未回收 → 注入
+                must_recover.append((fs_id, content))
+
+            if must_recover:
+                lines.append("【🔴 大纲指定本章必须回收的伏笔（不可遗漏！）】")
+                for fs_id, content in must_recover:
+                    lines.append(f"  [{fs_id}] {content}")
+                    lines.append(f"    ⚠️ 本章正文必须兑现此伏笔，并标注 [FS_RESOLVE: {fs_id}]")
+                lines.append("")
+
+        # === 常规待回收伏笔（过期 >5 章的 + 正常 pending） ===
+        # 过滤掉大纲指定了未来回收章的伏笔（避免剧透）
+        future_harvest_ids = set()
+        if outline_foreshadows:
+            for fs_data in outline_foreshadows:
+                if not isinstance(fs_data, dict):
+                    continue
+                h = fs_data.get("harvest_chapter")
+                if h and h > chapter:
+                    fid = fs_data.get("id", "")
+                    if fid:
+                        future_harvest_ids.add(fid)
+                    # 也按内容匹配（outline id 和 tracker id 可能不一致）
+                    c = fs_data.get("content", "")
+                    if c:
+                        for f in self.foreshadows:
+                            if re.sub(r'\s+', '', f.content) == re.sub(r'\s+', '', c):
+                                future_harvest_ids.add(f.id)
+
+        pending = [fs for fs in self.get_pending(before_chapter=chapter)
+                   if fs.id not in future_harvest_ids]
+        if pending:
+            lines.append("【⚠️ 待回收伏笔提醒（生成本章时考虑兑现）】")
+            # 过期伏笔警告（超过5章未回收）
+            expired = [fs for fs in pending if chapter - fs.chapter_planted > 5]
             if expired:
-                lines.append(f"\n  🟡 其他待回收伏笔：")
-            for fs in normal:
-                char_str = f"，涉及人物：{', '.join(fs.related_characters)}" if fs.related_characters else ""
-                lines.append(
-                    f"  [{fs.id}] 第{fs.chapter_planted}章埋下（重要度{fs.importance}）\n"
-                    f"    内容：{fs.content}{char_str}"
-                )
+                lines.append(f"\n  🔴 过期伏笔（已超过5章未回收，强烈建议本章兑现！）：")
+                for fs in expired:
+                    lines.append(
+                        f"    [{fs.id}] 第{fs.chapter_planted}章埋下（已过 {chapter - fs.chapter_planted} 章）\n"
+                        f"      内容：{fs.content[:80]}{'...' if len(fs.content) > 80 else ''}"
+                    )
+            # 正常待回收
+            normal = [fs for fs in pending if fs not in expired]
+            if normal:
+                if expired:
+                    lines.append(f"\n  🟡 其他待回收伏笔：")
+                for fs in normal:
+                    char_str = f"，涉及人物：{', '.join(fs.related_characters)}" if fs.related_characters else ""
+                    lines.append(
+                        f"  [{fs.id}] 第{fs.chapter_planted}章埋下（重要度{fs.importance}）\n"
+                        f"    内容：{fs.content}{char_str}"
+                    )
+
+        if not lines:
+            return "【伏笔追踪】当前无待回收伏笔。"
         return "\n".join(lines)
 
     def summarize(self) -> str:

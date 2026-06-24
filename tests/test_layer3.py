@@ -15,7 +15,7 @@ from novel_agent.agents.reviewer import ReviewerAgent
 
 # ========== 测试数据 ==========
 
-LONG_CHAPTER = ("叶青云站在山巅，眺望远方。" * 200) + "\n[FS: 神秘铜钱]\n"
+LONG_CHAPTER = ("叶青云站在山巅，眺望远方。" * 200) + "\n[FS: 古卷残页]\n"
 
 MOCK_CHAPTER_OUTPUT = (
     "===PRE_FLIGHT_CHECK===\n"
@@ -117,7 +117,7 @@ class TestWriterIntegration:
             chapter=1, content=content, summary="主角修炼",
             time_tag="第一天", location="宗门", characters=["叶青云"],
             title="第一章",
-            settings_json='{"foreshadows":[{"content":"神秘铜钱","type":"mystery","importance":3,"related_characters":["叶青云"]}]}',
+            settings_json='{"foreshadows":[{"content":"古卷残页","type":"mystery","importance":3,"related_characters":["叶青云"]}]}',
         )
 
         # 验证：章节文件已保存

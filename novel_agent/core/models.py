@@ -373,7 +373,7 @@ def generate_settings_json_example() -> str:
             "description": "因自负低估血煞教实力，险些中伏",
         }],
         "foreshadows": [{
-            "content": "神秘铜钱上刻的古文似乎隐藏着什么秘密",
+            "content": "古卷残页中隐约可见的禁制图案似乎与主角身世有关",
             "type": "mystery", "importance": 3,
             "related_characters": ["叶青云"],
         }],

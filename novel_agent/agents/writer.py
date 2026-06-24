@@ -268,7 +268,10 @@ class WriterAgent:
             scene_events=self.memory.get_scene_events_prompt(chapter=chapter),
             spacemap_prompt=self.continuity.get_spacemap_prompt(),
             outline_context=self.memory.get_outline_context_prompt(chapter),
-            foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(chapter),
+            foreshadow_prompt=self.foreshadow.generate_foreshadow_prompt(
+                chapter,
+                outline_foreshadows=self.memory.outline.get("foreshadows", []) if self.memory.outline else [],
+            ),
             correction_history=self.memory.get_correction_history_prompt(chapter),
             rag_context=rag_context,
             state_snapshot=state_snapshot,
@@ -488,6 +491,46 @@ class WriterAgent:
         idx = (chapter - 1) % len(self._HOOK_TYPES)
         return self._HOOK_TYPES[idx]
 
+    def _build_foreshadow_recovery_hint(self, content: str, chapter: int) -> str:
+        """构建伏笔回收提示，注入到修订 prompt 中。
+        列出正文关键词已命中的待回收伏笔，提醒修订 Agent 在修订时标记 [FS_RESOLVE:]。"""
+        import re as _re
+        _KW_RE = _re.compile(r'[\u4e00-\u9fff]{3,10}')
+        _FS_RESOLVE_RE = _re.compile(r'\[FS_RESOLVE[：:]\s*(FS_\d+)\s*\]')
+
+        already_resolved = set(_FS_RESOLVE_RE.findall(content))
+        pending = self.foreshadow.get_pending(before_chapter=chapter + 1)
+        if not pending:
+            return ""
+
+        hints = []
+        for fs in pending:
+            if fs.id in already_resolved:
+                continue
+            keywords = [kw for kw in _KW_RE.findall(fs.content) if len(kw) >= 3]
+            if not keywords:
+                continue
+            kw_count = len(keywords)
+            required = kw_count if kw_count <= 3 else max(kw_count * 2 // 3, 3)
+            match_count = sum(1 for kw in keywords if kw in content)
+            if match_count >= required:
+                chars = f"（涉及：{'、'.join(fs.related_characters)}）" if fs.related_characters else ""
+                hints.append(
+                    f"  [{fs.id}] 第{fs.chapter_planted}章（重要度{fs.importance}）{chars}\n"
+                    f"    内容：{fs.content}\n"
+                    f"    ⚠️ 正文已命中其关键词，请在修订时兑现并标注 [FS_RESOLVE: {fs.id}]"
+                )
+
+        if not hints:
+            return ""
+        lines = [
+            "## ⚠️ 伏笔回收提醒（以下伏笔的关键词在正文中已出现，修订时请考虑兑现）",
+            *hints,
+            "  如确认本章兑现了某个伏笔，请在兑现处标注 [FS_RESOLVE: FS_xxx]",
+            "  如本章确实未兑现，可忽略。",
+        ]
+        return "\n".join(lines)
+
     def _build_reviser_user_prompt(self, chapter, title, review_report, original_content,
                                      summary, time_tag, location, characters,
                                      generation_contract, logic_constraints: str = "") -> str:
@@ -508,6 +551,9 @@ class WriterAgent:
         timeline_events = self.continuity.timeline if self.continuity else None
         state_snapshot = self.memory.build_state_snapshot(chapter, characters, timeline_events, chapter_summary=summary)
 
+        # 伏笔回收提示：列出审校报告中提到的伏笔建议 + 正文已命中的待回收伏笔
+        foreshadow_recovery_hint = self._build_foreshadow_recovery_hint(content, chapter)
+
         return CHAPTER_REVISER_USER_PROMPT.format(
             chapter=chapter, title=title, review_report=review_report,
             original_content=original_content, summary=summary,
@@ -527,6 +573,7 @@ class WriterAgent:
             rhythm=self._get_rhythm_for_chapter(chapter),
             beat_type=self._get_beat_type_for_chapter(chapter),
             hook_type=self._get_hook_type_for_chapter(chapter),
+            foreshadow_recovery_hint=foreshadow_recovery_hint,
         )
 
     def _get_rag_context(self, chapter, title, summary, characters) -> str:
@@ -719,6 +766,50 @@ class WriterAgent:
         if tmp_path.exists():
             os.replace(str(tmp_path), str(chapter_path))
 
+    def _check_foreshadow_recovery(self, content: str, chapter: int) -> str:
+        """程序化伏笔回收检查：扫描正文是否命中待回收伏笔的关键词，但缺少 [FS_RESOLVE:] 标记。
+        返回需要补充的 [FS_RESOLVE: FS_xxx] 标记文本（空串表示无需补充）。"""
+        import re as _re
+        _FS_RESOLVE_RE = _re.compile(r'\[FS_RESOLVE[：:]\s*(FS_\d+)\s*\]')
+        _KW_RE = _re.compile(r'[\u4e00-\u9fff]{3,10}')
+
+        # 已显式标记回收的伏笔 ID
+        already_resolved = set(_FS_RESOLVE_RE.findall(content))
+
+        pending = self.foreshadow.get_pending(before_chapter=chapter + 1)
+        if not pending:
+            return ""
+
+        injected = []
+        for fs in pending:
+            if fs.id in already_resolved:
+                continue
+            keywords = _KW_RE.findall(fs.content)
+            if not keywords:
+                continue
+            # 关键词至少 3 字，排除太短的
+            keywords = [kw for kw in keywords if len(kw) >= 3]
+            if not keywords:
+                continue
+            kw_count = len(keywords)
+            # 匹配阈值：关键词数 ≤3 时全命中，否则 2/3
+            required = kw_count if kw_count <= 3 else max(kw_count * 2 // 3, 3)
+            match_count = sum(1 for kw in keywords if kw in content)
+            if match_count >= required:
+                injected.append(fs.id)
+                logger.info(
+                    "伏笔回收兜底: [%s] 关键词命中 %d/%d，自动注入 [FS_RESOLVE]",
+                    fs.id, match_count, kw_count,
+                )
+
+        if not injected:
+            return ""
+
+        # 在正文末尾追加标记（finalize_chapter 的 auto_resolve 会处理）
+        markers = "\n" + "\n".join(f"[FS_RESOLVE: {fs_id}]" for fs_id in injected)
+        print(f"  🔧 程序化伏笔兜底: 自动注入 {len(injected)} 个回收标记 {[i for i in injected]}")
+        return markers
+
     def review_loop(self, reviewer, chapter, title, content, summary, time_tag, location, characters, settings_json=None, logic_constraints=""):
         max_revisions = config.MAX_REVIEW_REVISIONS
         prev_score = None
@@ -781,6 +872,11 @@ class WriterAgent:
             print("  修订完成，重新审校...")
 
             prev_score = report["overall_score"]
+
+        # === 伏笔回收兜底：程序化扫描，补充 LLM 遗漏的 [FS_RESOLVE] 标记 ===
+        fs_markers = self._check_foreshadow_recovery(content, chapter)
+        if fs_markers:
+            content = content + fs_markers
 
         self.finalize_chapter(
             chapter=chapter, content=content, summary=summary,
@@ -1073,23 +1169,54 @@ class WriterAgent:
             return None
 
     def _merge_foreshadows(self, explicit: List[str], settings_fs: List[dict], chapter: int) -> List[dict]:
-        seen = set()
+        """融合显式标记和设定提取的伏笔，去重支持子串/模糊匹配。"""
+        seen_normalized = []  # [(normalized_text, original_dict)]
         result = []
+
+        def _is_duplicate(text: str) -> bool:
+            """检查 text 是否与已有伏笔重复（精确/子串/包含关系）"""
+            normalized = re.sub(r'\s+', '', text)
+            if len(normalized) < 4:
+                return normalized in {t for t, _ in seen_normalized}
+            for seen_text, _ in seen_normalized:
+                if len(seen_text) < 4:
+                    continue
+                # 精确匹配
+                if normalized == seen_text:
+                    return True
+                # 子串匹配：短的被长的包含（阈值：重叠 >= min(len) 的 80%）
+                min_len = min(len(normalized), len(seen_text))
+                if min_len < 4:
+                    continue
+                overlap_threshold = int(min_len * 0.8)
+                if normalized in seen_text or seen_text in normalized:
+                    # 确认不是偶然子串（重叠长度需 >= 阈值）
+                    longer = max(len(normalized), len(seen_text))
+                    shorter = min(len(normalized), len(seen_text))
+                    if shorter >= overlap_threshold:
+                        return True
+            return False
+
         for fs_text in explicit:
+            if _is_duplicate(fs_text):
+                continue
             normalized = re.sub(r'\s+', '', fs_text)
-            if normalized not in seen:
-                seen.add(normalized)
-                result.append({"content": fs_text, "type": "mystery", "importance": 2,
-                               "related_characters": [], "source": "显式标记"})
+            entry = {"content": fs_text, "type": "mystery", "importance": 2,
+                     "related_characters": [], "source": "显式标记"}
+            seen_normalized.append((normalized, entry))
+            result.append(entry)
+
         for fs in settings_fs:
             content = fs.get("content", "")
             if not content:
                 continue
+            if _is_duplicate(content):
+                continue
             normalized = re.sub(r'\s+', '', content)
-            if normalized not in seen:
-                seen.add(normalized)
-                fs["source"] = "设定提取"
-                result.append(fs)
+            fs["source"] = "设定提取"
+            seen_normalized.append((normalized, fs))
+            result.append(fs)
+
         return result
 
     def save_chapter(self, chapter: int, title: str, content: str, output_dir: str = None):

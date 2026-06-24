@@ -142,9 +142,9 @@ class TestSplitOutputAndSettings:
 
 class TestExtractForeshadows:
     def test_fs_bracket_marker(self, writer):
-        content = "正文[FS: 神秘铜钱闪烁]正文"
+        content = "正文[FS: 古卷残页闪烁]正文"
         result = writer._extract_foreshadows(content, 1)
-        assert "神秘铜钱闪烁" in result
+        assert "古卷残页闪烁" in result
 
     def test_fs_colon_prefix(self, writer):
         content = "FS：隐藏身份\n下一行"
